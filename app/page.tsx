@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const INTERVALLO_MS = 60_000;
 
@@ -70,12 +70,29 @@ const it = (x: number, dec = 0) => x.toLocaleString("it-IT", { minimumFractionDi
 const tondo = (x: number) => Math.round(x);
 const rr = (s: Scenario, target: number) => Math.abs(target - s.entrata) / Math.abs(s.entrata - s.stop);
 
+type StatoNotifiche = "non-supportate" | "default" | "granted" | "denied";
+
 export default function Dashboard() {
   const [dati, setDati] = useState<RispostaApi | null>(null);
   const [errore, setErrore] = useState<string | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [ultimoFetch, setUltimoFetch] = useState<Date | null>(null);
   const [secondiProssimo, setSecondiProssimo] = useState(60);
+  const [statoNotifiche, setStatoNotifiche] = useState<StatoNotifiche>("non-supportate");
+  // chiave dell'ultimo segnale già notificato: evita di far suonare la stessa operazione
+  // a ogni giro di polling finché resta valida.
+  const ultimoAvvisato = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setStatoNotifiche(Notification.permission as StatoNotifiche);
+    }
+  }, []);
+
+  const chiediNotifiche = useCallback(() => {
+    if (!("Notification" in window)) return;
+    Notification.requestPermission().then((esito) => setStatoNotifiche(esito as StatoNotifiche));
+  }, []);
 
   const aggiorna = useCallback(async () => {
     try {
@@ -84,6 +101,19 @@ export default function Dashboard() {
       if (!json.ok) throw new Error(json.errore || "errore sconosciuto");
       setDati(json);
       setErrore(null);
+
+      if (json.segnale.lato !== "ATTENDI" && json.segnale.scenario && Notification.permission === "granted") {
+        const s = json.segnale.scenario;
+        const chiave = `${json.segnale.lato}-${s.entrata}-${json.quadro.t}`;
+        if (ultimoAvvisato.current !== chiave) {
+          ultimoAvvisato.current = chiave;
+          const icona = json.segnale.lato === "BUY" ? "🟢" : "🔴";
+          new Notification(`${icona} XAUUSD ${json.segnale.lato}`, {
+            body: `entrata ${it(s.entrata, 2)} · stop ${it(s.stop, 2)} · target ${it(s.t1, 2)} / ${it(s.t2, 2)}`,
+            tag: "oro-segnale",
+          });
+        }
+      }
     } catch (e) {
       setErrore(e instanceof Error ? e.message : String(e));
     } finally {
@@ -106,13 +136,28 @@ export default function Dashboard() {
 
   return (
     <main className="min-h-screen max-w-2xl mx-auto px-4 py-6 space-y-5">
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">🟡 assistente oro</h1>
         <div className="text-right text-xs text-neutral-400">
           {ultimoFetch && <div>aggiornato {ultimoFetch.toLocaleTimeString("it-IT")}</div>}
           <div>prossimo tra {secondiProssimo}s · <button onClick={aggiorna} className="underline hover:text-amber-400">aggiorna ora</button></div>
         </div>
       </header>
+
+      {statoNotifiche === "default" && (
+        <button
+          onClick={chiediNotifiche}
+          className="w-full rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-2 text-sm text-amber-300 hover:bg-amber-950/70 transition text-left"
+        >
+          🔔 attiva le notifiche pop-up — appena arriva un BUY/SELL te lo mostro anche a scheda
+          minimizzata (tienila aperta in background sul browser)
+        </button>
+      )}
+      {statoNotifiche === "denied" && (
+        <div className="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-2 text-xs text-neutral-500">
+          notifiche bloccate dal browser — per riattivarle: impostazioni del sito → notifiche
+        </div>
+      )}
 
       {caricando && !dati && <div className="text-neutral-400">carico i dati…</div>}
 

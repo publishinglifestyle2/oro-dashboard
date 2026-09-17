@@ -235,11 +235,15 @@ export interface Segnale {
   motivo: string;
 }
 
-/** valuta solo le ultime due candele 5m CONCLUSE, esattamente come il bot locale. */
+/** valuta solo le ultime due candele 5m CONCLUSE, esattamente come il bot locale.
+ * oraInizio/oraFine sono configurabili (env ORA_INIZIO/ORA_FINE): il backtest è stato fatto
+ * sulla finestra 9-18, fuori da lì il motore opera su condizioni mai verificate. */
 export function valutaTrigger(
   m5: Candela[],
   q: Quadro,
-  sc: [Scenario, Scenario, Scenario, Scenario]
+  sc: [Scenario, Scenario, Scenario, Scenario],
+  oraInizio: number = ORA_INIZIO,
+  oraFine: number = ORA_FINE
 ): Segnale {
   const concluse = m5.filter((c) => c.completa);
   if (concluse.length < 3) return { lato: "ATTENDI", motivo: "dati insufficienti" };
@@ -248,12 +252,13 @@ export function valutaTrigger(
 
   const { ora, minuto, weekday } = partiRoma(q.t);
   const oraDecimale = ora + minuto / 60;
-  if (!(oraDecimale >= ORA_INIZIO && oraDecimale < ORA_FINE)) {
+  if (!(oraDecimale >= oraInizio && oraDecimale < oraFine)) {
     return {
       lato: "ATTENDI",
-      motivo: `fuori orario (${String(ora).padStart(2, "0")}:${String(minuto).padStart(2, "0")}): si opera solo 09:00-18:00`,
+      motivo: `fuori orario (${String(ora).padStart(2, "0")}:${String(minuto).padStart(2, "0")}): si opera solo ${String(oraInizio).padStart(2, "0")}:00-${String(oraFine).padStart(2, "0")}:00`,
     };
   }
+  // il weekend resta bloccato sempre: qui il mercato dell'oro è chiuso, non è una scelta di strategia.
   if (weekday === 0 || weekday === 6) return { lato: "ATTENDI", motivo: "mercati chiusi nel weekend" };
 
   const a5Serie = atrSerie(m5, 14);

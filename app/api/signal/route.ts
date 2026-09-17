@@ -13,6 +13,11 @@ export async function GET() {
     const env = process.env.OANDA_ENV || "practice";
     const capitale = parseFloat(process.env.CAPITALE || "950");
     const rischioPct = parseFloat(process.env.RISCHIO_PCT || "2");
+    // di default sempre attivo (0-24): il backtest però copre solo 9-18, fuori da lì
+    // il motore segnala su condizioni mai verificate. per tornare alla finestra testata,
+    // imposta ORA_INIZIO=9 e ORA_FINE=18 su Vercel.
+    const oraInizio = parseFloat(process.env.ORA_INIZIO || "0");
+    const oraFine = parseFloat(process.env.ORA_FINE || "24");
 
     let h1, m15, m5, fonte: string, affidabile: boolean;
     const daTradingView = await fetchDbTutto().catch(() => null);
@@ -36,7 +41,7 @@ export async function GET() {
 
     const quadro = costruisciQuadro(h1, m15, m5);
     const scenari = costruisciScenari(quadro);
-    let segnale = valutaTrigger(m5, quadro, scenari);
+    let segnale = valutaTrigger(m5, quadro, scenari, oraInizio, oraFine);
 
     let sizing = null;
     let avviso: string | null = null;
