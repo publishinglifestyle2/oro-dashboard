@@ -79,28 +79,33 @@ export function cluster(cands: { prezzo: number; fonte: string }[], tol: number)
   return out;
 }
 
-/** raggruppa candele più fini in candele più larghe (bucket allineati all'epoca) */
-export function ricampiona(candele: Candela[], intervalloMs: number): Candela[] {
+/** raggruppa candele più fini in candele più larghe (bucket allineati all'epoca).
+ * granularitaFonteMs = passo delle candele in ingresso (default 1 minuto): serve per capire
+ * se l'ULTIMO bucket è ancora in formazione (gli mancano dei minuti) — altrimenti il motore
+ * rischierebbe di valutare un trigger su una candela 5m/15m/1h non ancora chiusa. I bucket
+ * precedenti restano sempre "conclusi": per definizione hanno già tutti i dati che avranno mai. */
+export function ricampiona(candele: Candela[], intervalloMs: number, granularitaFonteMs = 60_000): Candela[] {
   const bucket = new Map<number, Candela[]>();
   for (const c of candele) {
     const chiave = Math.floor(c.time / intervalloMs) * intervalloMs;
     if (!bucket.has(chiave)) bucket.set(chiave, []);
     bucket.get(chiave)!.push(c);
   }
-  return [...bucket.keys()]
-    .sort((a, b) => a - b)
-    .map((k) => {
-      const g = bucket.get(k)!;
-      return {
-        time: k,
-        open: g[0].open,
-        close: g[g.length - 1].close,
-        high: Math.max(...g.map((c) => c.high)),
-        low: Math.min(...g.map((c) => c.low)),
-        volume: g.reduce((s, c) => s + c.volume, 0),
-        completa: true,
-      };
-    });
+  const chiavi = [...bucket.keys()].sort((a, b) => a - b);
+  const attesiPerBucket = intervalloMs / granularitaFonteMs;
+  return chiavi.map((k, i) => {
+    const g = bucket.get(k)!;
+    const ultimo = i === chiavi.length - 1;
+    return {
+      time: k,
+      open: g[0].open,
+      close: g[g.length - 1].close,
+      high: Math.max(...g.map((c) => c.high)),
+      low: Math.min(...g.map((c) => c.low)),
+      volume: g.reduce((s, c) => s + c.volume, 0),
+      completa: !ultimo || g.length >= attesiPerBucket,
+    };
+  });
 }
 
 export function tondo(x: number): number {
