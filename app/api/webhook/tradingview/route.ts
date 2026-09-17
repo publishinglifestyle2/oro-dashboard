@@ -10,7 +10,7 @@ let schemaPronto = false;
 // La chiave nell'url protegge l'endpoint: senza TV_WEBHOOK_SECRET configurata, rifiuta tutto.
 export async function POST(req: NextRequest) {
   const chiave = req.nextUrl.searchParams.get("key");
-  const attesa = process.env.TV_WEBHOOK_SECRET;
+  const attesa = process.env.TV_WEBHOOK_SECRET?.trim();
   if (!attesa || chiave !== attesa) {
     return NextResponse.json({ ok: false, errore: "chiave non valida" }, { status: 401 });
   }

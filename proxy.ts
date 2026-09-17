@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 // protezione leggera: se DASHBOARD_PASSCODE non è impostata, il sito resta aperto.
 // impostala su vercel per non lasciare capitale e rischio visibili a chiunque trovi l'url.
 export function proxy(req: NextRequest) {
-  const passcode = process.env.DASHBOARD_PASSCODE;
+  // .trim(): un a-capo finale infilato per sbaglio nella variabile d'ambiente
+  // (capita facilmente da riga di comando, es. con `echo` invece di `printf`)
+  // altrimenti farebbe fallire il confronto silenziosamente.
+  const passcode = process.env.DASHBOARD_PASSCODE?.trim();
   if (!passcode) return NextResponse.next();
 
   const url = new URL(req.url);
