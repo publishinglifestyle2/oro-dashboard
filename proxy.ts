@@ -30,5 +30,7 @@ export function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|entra|favicon.ico|api/health).*)"],
+  // api/webhook resta fuori: ha già la sua protezione via chiave nell'url (TV_WEBHOOK_SECRET)
+  // e TradingView non gestisce cookie/redirect, quindi il gate del passcode lo bloccherebbe.
+  matcher: ["/((?!_next|entra|favicon.ico|api/health|api/webhook).*)"],
 };
