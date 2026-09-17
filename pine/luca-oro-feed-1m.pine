@@ -1,0 +1,24 @@
+//@version=6
+indicator("Luca Oro — feed 1m", overlay=true)
+
+// Manda solo i dati grezzi della candela (open/high/low/close/volume) al sito ogni volta che
+// si chiude un minuto. Tutta l'analisi (livelli, trend, segnali) è fatta dal sito, non qui:
+// così la logica resta un'unica versione, testata, invece di essere duplicata in due posti.
+//
+// Uso: applica questo script a un grafico OANDA:XAUUSD, candele standard, timeframe 1 minuto.
+// Poi crea un Alert su questo script, condizione "Luca Oro — feed 1m", "Once Per Bar Close",
+// e come webhook URL metti: https://TUO-SITO.vercel.app/api/webhook/tradingview?key=LA_TUA_CHIAVE
+// (la chiave deve essere identica a TV_WEBHOOK_SECRET impostata su Vercel).
+// Il messaggio dell'alert lo compone da solo lo script qui sotto, non serve scriverlo a mano.
+
+if syminfo.tickerid != "OANDA:XAUUSD" or timeframe.period != "1" or not chart.is_standard
+    runtime.error("Applica questo script a OANDA:XAUUSD, candele standard, timeframe 1 minuto.")
+
+messaggio = '{"t":' + str.tostring(time) +
+   ',"open":' + str.tostring(open) +
+   ',"high":' + str.tostring(high) +
+   ',"low":' + str.tostring(low) +
+   ',"close":' + str.tostring(close) +
+   ',"volume":' + str.tostring(volume) + '}'
+
+alert(messaggio, alert.freq_once_per_bar_close)

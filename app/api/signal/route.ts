@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchOandaTutto } from "@/lib/oanda";
 import { fetchYahooTutto } from "@/lib/yahoo";
+import { fetchDbTutto } from "@/lib/tvdb";
 import { calcolaSize, costruisciQuadro, costruisciScenari, rischioScenario, rr, valutaTrigger, RR_MINIMO_T2, LOT_STEP } from "@/lib/motore";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,12 @@ export async function GET() {
     const rischioPct = parseFloat(process.env.RISCHIO_PCT || "2");
 
     let h1, m15, m5, fonte: string, affidabile: boolean;
-    if (token) {
+    const daTradingView = await fetchDbTutto().catch(() => null);
+    if (daTradingView) {
+      ({ h1, m15, m5 } = daTradingView);
+      fonte = "TradingView Premium (webhook in tempo reale)";
+      affidabile = true;
+    } else if (token) {
       ({ h1, m15, m5 } = await fetchOandaTutto(token, env));
       fonte = `OANDA (${env === "practice" ? "conto practice" : "conto live"})`;
       affidabile = true;
