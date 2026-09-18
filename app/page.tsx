@@ -327,6 +327,15 @@ export default function Dashboard() {
           📱 notifiche push attive su questo dispositivo
         </div>
       )}
+      {statoPush === "errore" && (
+        <div className="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-2 text-xs text-neutral-500">
+          non sono riuscito ad attivare le notifiche push (permesso negato o non supportato) — controlla nelle
+          impostazioni del telefono che il sito/app abbia il permesso di inviare notifiche, poi{" "}
+          <button onClick={() => window.location.reload()} className="underline hover:text-amber-400">
+            ricarica la pagina
+          </button>
+        </div>
+      )}
 
       {caricando && !dati && <div className="text-neutral-400">carico i dati…</div>}
 
