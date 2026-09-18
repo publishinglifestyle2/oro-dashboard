@@ -285,7 +285,7 @@ export default function Dashboard() {
   const posizioneAperta = operazioni?.aperta ?? null;
 
   return (
-    <main className="min-h-screen max-w-2xl mx-auto px-4 py-6 space-y-5">
+    <main className="min-h-screen max-w-[1400px] mx-auto px-4 py-6 space-y-5">
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">🟡 assistente oro</h1>
         <div className="text-right text-xs text-neutral-400">
@@ -355,27 +355,35 @@ export default function Dashboard() {
       {dati && (
         <>
           <FonteBadge fonte={dati.fonte} affidabile={dati.affidabile} ritardoMin={dati.ritardoMin} />
-          <PrezzoCard q={dati.quadro} />
-          <GraficoCard candele={dati.candeleGrafico} q={dati.quadro} segnale={dati.segnale} posizioneAperta={posizioneAperta} />
-          <LivelliCard q={dati.quadro} />
 
-          {posizioneAperta ? (
-            <PosizioneApertaCard op={posizioneAperta} prezzoAttuale={dati.quadro.prezzo} onChiudi={chiudi} bloccato={azioneInCorso} />
-          ) : (
-            <SegnaleCard
-              segnale={dati.segnale}
-              sizing={dati.sizing}
-              avviso={dati.avviso}
-              capitale={dati.capitale}
-              rischioPct={dati.rischioPct}
-              onApri={apri}
-              bloccato={azioneInCorso}
-            />
-          )}
+          {/* colonna larga (grafico) a sinistra, azioni a destra — solo su schermi larghi: sul telefono resta tutto impilato */}
+          <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[1.6fr_1fr] lg:gap-5 lg:items-start">
+            <div className="space-y-5">
+              <PrezzoCard q={dati.quadro} />
+              <GraficoCard candele={dati.candeleGrafico} q={dati.quadro} segnale={dati.segnale} posizioneAperta={posizioneAperta} />
+              <LivelliCard q={dati.quadro} />
+            </div>
 
-          {!posizioneAperta && <EntrataManualeCard q={dati.quadro} scenari={dati.scenari} onApri={apri} bloccato={azioneInCorso} />}
-          {!posizioneAperta && <ComeMiMuovoCard scenari={dati.scenari} />}
-          {operazioni && operazioni.storico.length > 0 && <StoricoCard storico={operazioni.storico} />}
+            <div className="space-y-5 mt-5 lg:mt-0">
+              {posizioneAperta ? (
+                <PosizioneApertaCard op={posizioneAperta} prezzoAttuale={dati.quadro.prezzo} onChiudi={chiudi} bloccato={azioneInCorso} />
+              ) : (
+                <SegnaleCard
+                  segnale={dati.segnale}
+                  sizing={dati.sizing}
+                  avviso={dati.avviso}
+                  capitale={dati.capitale}
+                  rischioPct={dati.rischioPct}
+                  onApri={apri}
+                  bloccato={azioneInCorso}
+                />
+              )}
+
+              {!posizioneAperta && <EntrataManualeCard q={dati.quadro} scenari={dati.scenari} onApri={apri} bloccato={azioneInCorso} />}
+              {!posizioneAperta && <ComeMiMuovoCard scenari={dati.scenari} />}
+              {operazioni && operazioni.storico.length > 0 && <StoricoCard storico={operazioni.storico} />}
+            </div>
+          </div>
         </>
       )}
 
@@ -459,6 +467,8 @@ function GraficoCard({
   // crea il grafico una sola volta
   useEffect(() => {
     if (!contenitoreRef.current) return;
+    // più alto su schermi larghi (pc), dove c'è spazio: su telefono resta compatto.
+    const altezza = () => (window.innerWidth >= 1024 ? 460 : 280);
     const chart = createChart(contenitoreRef.current, {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#a3a3a3" },
       grid: { vertLines: { color: "#1f1f1f" }, horzLines: { color: "#1f1f1f" } },
@@ -467,7 +477,7 @@ function GraficoCard({
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040" },
       rightPriceScale: { visible: true, borderColor: "#404040" },
       leftPriceScale: { visible: false },
-      height: 280,
+      height: altezza(),
       width: contenitoreRef.current.clientWidth,
     });
     const serie = chart.addSeries(CandlestickSeries, {
@@ -483,7 +493,7 @@ function GraficoCard({
     chart.timeScale().subscribeVisibleLogicalRangeChange(ricalcolaEtichette);
 
     const ridimensiona = () => {
-      if (contenitoreRef.current) chart.applyOptions({ width: contenitoreRef.current.clientWidth });
+      if (contenitoreRef.current) chart.applyOptions({ width: contenitoreRef.current.clientWidth, height: altezza() });
       ricalcolaEtichette();
     };
     window.addEventListener("resize", ridimensiona);
