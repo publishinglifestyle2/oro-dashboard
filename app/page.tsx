@@ -497,10 +497,12 @@ function GraficoCard({
       );
     };
 
-    linea(q.r1, "#f87171", "resistenza");
-    linea(q.r2, "#f87171", "resistenza");
-    linea(q.s1, "#34d399", "supporto");
-    linea(q.s2, "#34d399", "supporto");
+    // i livelli vicini sono i trigger veri (rimbalzo sul supporto = entra buy, rifiuto sulla
+    // resistenza = entra sell — vedi "come mi muovo io"); quelli chiave restano target di riferimento.
+    linea(q.r1, "#f87171", "🔴 entra SELL");
+    linea(q.r2, "#f87171", "target");
+    linea(q.s1, "#34d399", "🟢 entra BUY");
+    linea(q.s2, "#34d399", "target");
 
     if (posizioneAperta) {
       linea(posizioneAperta.entrata, "#f5c518", "entrata");
