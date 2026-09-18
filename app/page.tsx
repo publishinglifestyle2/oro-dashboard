@@ -446,16 +446,17 @@ function GraficoCard({
     const chart = createChart(contenitoreRef.current, {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#a3a3a3" },
       grid: { vertLines: { color: "#1f1f1f" }, horzLines: { color: "#1f1f1f" } },
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040" },
-      // scala prezzi (e quindi le etichette dei livelli) a sinistra: a destra ci deve restare
-      // libera la parte più recente del grafico, altrimenti le etichette la coprono.
-      rightPriceScale: { visible: false },
-      leftPriceScale: { visible: true, borderColor: "#404040" },
+      // prezzi a destra, come su TradingView. Per non far coprire le candele più recenti dalle
+      // etichette dei livelli (che crescono verso sinistra dall'asse), lascio vuoto a destra
+      // (rightOffset) lo spazio in cui possono espandersi senza sovrapporsi ai prezzi veri.
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040", rightOffset: 22 },
+      rightPriceScale: { visible: true, borderColor: "#404040" },
+      leftPriceScale: { visible: false },
       height: 280,
       width: contenitoreRef.current.clientWidth,
     });
     const serie = chart.addSeries(CandlestickSeries, {
-      priceScaleId: "left",
+      priceScaleId: "right",
       upColor: "#34d399",
       downColor: "#f87171",
       borderVisible: false,
