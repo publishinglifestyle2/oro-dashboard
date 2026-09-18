@@ -60,6 +60,15 @@ export async function GET() {
 
     const ritardoMin = (Date.now() - quadro.t) / 60000;
 
+    // per il grafico: ultime ~200 candele 5m (~16 ore), tempo in secondi come vuole lightweight-charts
+    const candeleGrafico = m5.slice(-200).map((c) => ({
+      time: Math.floor(c.time / 1000),
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+
     return NextResponse.json({
       ok: true,
       fonte,
@@ -73,6 +82,7 @@ export async function GET() {
       avviso,
       capitale,
       rischioPct,
+      candeleGrafico,
     });
   } catch (e) {
     const messaggio = e instanceof Error ? e.message : String(e);

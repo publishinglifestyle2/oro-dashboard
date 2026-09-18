@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createChart, CandlestickSeries, ColorType, IChartApi, ISeriesApi, IPriceLine, CandlestickData, UTCTimestamp } from "lightweight-charts";
 
 const INTERVALLO_MS = 60_000;
 const SPREAD_STIMATO = 0.35; // stessa costante usata server-side: qui serve solo per l'anteprima live
@@ -65,6 +66,7 @@ interface RispostaApi {
   avviso: string | null;
   capitale: number;
   rischioPct: number;
+  candeleGrafico: { time: number; open: number; high: number; low: number; close: number }[];
 }
 interface Operazione {
   id: number;
@@ -354,6 +356,7 @@ export default function Dashboard() {
         <>
           <FonteBadge fonte={dati.fonte} affidabile={dati.affidabile} ritardoMin={dati.ritardoMin} />
           <PrezzoCard q={dati.quadro} />
+          <GraficoCard candele={dati.candeleGrafico} q={dati.quadro} segnale={dati.segnale} posizioneAperta={posizioneAperta} />
           <LivelliCard q={dati.quadro} />
 
           {posizioneAperta ? (
@@ -417,6 +420,102 @@ function PrezzoCard({ q }: { q: Quadro }) {
         <Badge label={`vwap ${it(q.vwap, 1)}`} tono={q.prezzo > q.vwap ? "su" : "giu"} />
       </div>
       <div className="text-xs text-neutral-500">atr 5m {q.atr5.toFixed(1)}$ · 15m {q.atr15.toFixed(1)}$ · 1h {q.atr1h.toFixed(1)}$</div>
+    </section>
+  );
+}
+
+function GraficoCard({
+  candele,
+  q,
+  segnale,
+  posizioneAperta,
+}: {
+  candele: { time: number; open: number; high: number; low: number; close: number }[];
+  q: Quadro;
+  segnale: Segnale;
+  posizioneAperta: Operazione | null;
+}) {
+  const contenitoreRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const serieRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const lineeRef = useRef<IPriceLine[]>([]);
+
+  // crea il grafico una sola volta
+  useEffect(() => {
+    if (!contenitoreRef.current) return;
+    const chart = createChart(contenitoreRef.current, {
+      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#a3a3a3" },
+      grid: { vertLines: { color: "#1f1f1f" }, horzLines: { color: "#1f1f1f" } },
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040" },
+      rightPriceScale: { borderColor: "#404040" },
+      height: 280,
+      width: contenitoreRef.current.clientWidth,
+    });
+    const serie = chart.addSeries(CandlestickSeries, {
+      upColor: "#34d399",
+      downColor: "#f87171",
+      borderVisible: false,
+      wickUpColor: "#34d399",
+      wickDownColor: "#f87171",
+    });
+    chartRef.current = chart;
+    serieRef.current = serie;
+
+    const ridimensiona = () => {
+      if (contenitoreRef.current) chart.applyOptions({ width: contenitoreRef.current.clientWidth });
+    };
+    window.addEventListener("resize", ridimensiona);
+    return () => {
+      window.removeEventListener("resize", ridimensiona);
+      chart.remove();
+      chartRef.current = null;
+      serieRef.current = null;
+    };
+  }, []);
+
+  // aggiorna le candele a ogni giro
+  useEffect(() => {
+    if (!serieRef.current || candele.length === 0) return;
+    serieRef.current.setData(candele as CandlestickData<UTCTimestamp>[]);
+    chartRef.current?.timeScale().fitContent();
+  }, [candele]);
+
+  // ridisegna le linee (livelli + eventuale operazione/segnale) a ogni giro
+  useEffect(() => {
+    const serie = serieRef.current;
+    if (!serie) return;
+    lineeRef.current.forEach((l) => serie.removePriceLine(l));
+    lineeRef.current = [];
+
+    const linea = (price: number, color: string, title: string, tratteggiata = false) => {
+      lineeRef.current.push(
+        serie.createPriceLine({ price, color, lineWidth: 1, lineStyle: tratteggiata ? 2 : 0, axisLabelVisible: true, title })
+      );
+    };
+
+    linea(q.r1, "#f87171", "resistenza");
+    linea(q.r2, "#f87171", "resistenza");
+    linea(q.s1, "#34d399", "supporto");
+    linea(q.s2, "#34d399", "supporto");
+
+    if (posizioneAperta) {
+      linea(posizioneAperta.entrata, "#f5c518", "entrata");
+      linea(posizioneAperta.stop, "#ef4444", "stop", true);
+      linea(posizioneAperta.t1, "#22c55e", "t1", true);
+      linea(posizioneAperta.t2, "#22c55e", "t2", true);
+    } else if (segnale.lato !== "ATTENDI" && segnale.scenario) {
+      const s = segnale.scenario;
+      linea(s.entrata, "#f5c518", "entrata");
+      linea(s.stop, "#ef4444", "stop", true);
+      linea(s.t1, "#22c55e", "t1", true);
+      linea(s.t2, "#22c55e", "t2", true);
+    }
+  }, [q, segnale, posizioneAperta]);
+
+  return (
+    <section className="rounded-xl bg-neutral-900 p-4">
+      <h2 className="text-sm font-medium text-neutral-400 mb-2">grafico live (5 minuti)</h2>
+      <div ref={contenitoreRef} />
     </section>
   );
 }
