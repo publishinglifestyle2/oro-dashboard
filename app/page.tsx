@@ -439,6 +439,21 @@ function GraficoCard({
   const chartRef = useRef<IChartApi | null>(null);
   const serieRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const lineeRef = useRef<IPriceLine[]>([]);
+  // livelli da posizionare come etichette a sinistra (testo separato dai numeri sull'asse a destra)
+  const livelliRef = useRef<{ price: number; testo: string; colore: string }[]>([]);
+  const [etichette, setEtichette] = useState<{ y: number; testo: string; colore: string }[]>([]);
+
+  const ricalcolaEtichette = useCallback(() => {
+    const serie = serieRef.current;
+    if (!serie) return;
+    const nuove = livelliRef.current
+      .map((l) => {
+        const y = serie.priceToCoordinate(l.price);
+        return y == null ? null : { y: Number(y), testo: l.testo, colore: l.colore };
+      })
+      .filter((x): x is { y: number; testo: string; colore: string } => x !== null);
+    setEtichette(nuove);
+  }, []);
 
   // crea il grafico una sola volta
   useEffect(() => {
@@ -446,10 +461,9 @@ function GraficoCard({
     const chart = createChart(contenitoreRef.current, {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#a3a3a3" },
       grid: { vertLines: { color: "#1f1f1f" }, horzLines: { color: "#1f1f1f" } },
-      // prezzi a destra, come su TradingView. Per non far coprire le candele più recenti dalle
-      // etichette dei livelli (che crescono verso sinistra dall'asse), lascio vuoto a destra
-      // (rightOffset) lo spazio in cui possono espandersi senza sovrapporsi ai prezzi veri.
-      timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040", rightOffset: 22 },
+      // prezzi puliti a destra, come su TradingView. Le scritte (entra BUY/SELL, target) le
+      // disegno io come etichette a sinistra (sotto), non fanno parte dell'asse.
+      timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040" },
       rightPriceScale: { visible: true, borderColor: "#404040" },
       leftPriceScale: { visible: false },
       height: 280,
@@ -465,9 +479,11 @@ function GraficoCard({
     });
     chartRef.current = chart;
     serieRef.current = serie;
+    chart.timeScale().subscribeVisibleLogicalRangeChange(ricalcolaEtichette);
 
     const ridimensiona = () => {
       if (contenitoreRef.current) chart.applyOptions({ width: contenitoreRef.current.clientWidth });
+      ricalcolaEtichette();
     };
     window.addEventListener("resize", ridimensiona);
     return () => {
@@ -476,14 +492,15 @@ function GraficoCard({
       chartRef.current = null;
       serieRef.current = null;
     };
-  }, []);
+  }, [ricalcolaEtichette]);
 
   // aggiorna le candele a ogni giro
   useEffect(() => {
     if (!serieRef.current || candele.length === 0) return;
     serieRef.current.setData(candele as CandlestickData<UTCTimestamp>[]);
     chartRef.current?.timeScale().fitContent();
-  }, [candele]);
+    ricalcolaEtichette();
+  }, [candele, ricalcolaEtichette]);
 
   // ridisegna le linee (livelli + eventuale operazione/segnale) a ogni giro
   useEffect(() => {
@@ -491,11 +508,11 @@ function GraficoCard({
     if (!serie) return;
     lineeRef.current.forEach((l) => serie.removePriceLine(l));
     lineeRef.current = [];
+    livelliRef.current = [];
 
-    const linea = (price: number, color: string, title: string, tratteggiata = false) => {
-      lineeRef.current.push(
-        serie.createPriceLine({ price, color, lineWidth: 1, lineStyle: tratteggiata ? 2 : 0, axisLabelVisible: true, title })
-      );
+    const linea = (price: number, color: string, testo: string, tratteggiata = false) => {
+      lineeRef.current.push(serie.createPriceLine({ price, color, lineWidth: 1, lineStyle: tratteggiata ? 2 : 0, axisLabelVisible: true }));
+      livelliRef.current.push({ price, testo, colore: color });
     };
 
     // i livelli vicini sono i trigger veri (rimbalzo sul supporto = entra buy, rifiuto sulla
@@ -517,12 +534,24 @@ function GraficoCard({
       linea(s.t1, "#22c55e", "t1", true);
       linea(s.t2, "#22c55e", "t2", true);
     }
-  }, [q, segnale, posizioneAperta]);
+    ricalcolaEtichette();
+  }, [q, segnale, posizioneAperta, ricalcolaEtichette]);
 
   return (
     <section className="rounded-xl bg-neutral-900 p-4">
       <h2 className="text-sm font-medium text-neutral-400 mb-2">grafico live (1 minuto)</h2>
-      <div ref={contenitoreRef} />
+      <div className="relative">
+        <div ref={contenitoreRef} />
+        {etichette.map((e, i) => (
+          <div
+            key={i}
+            className="absolute left-1 -translate-y-1/2 pointer-events-none rounded px-1.5 py-0.5 text-[10px] font-medium text-neutral-950 whitespace-nowrap"
+            style={{ top: e.y, backgroundColor: e.colore }}
+          >
+            {e.testo}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
