@@ -26,3 +26,27 @@ export async function assicuraSchema() {
     )
   `;
 }
+
+export async function assicuraSchemaOperazioni() {
+  const sql = getSql();
+  await sql`
+    create table if not exists operazioni (
+      id serial primary key,
+      lato text not null,
+      entrata double precision not null,
+      stop double precision not null,
+      t1 double precision not null,
+      t2 double precision not null,
+      lotti double precision not null,
+      rischio_usd double precision not null,
+      motivo text,
+      aperta_il timestamptz not null default now(),
+      stato text not null default 'aperta',
+      esito text,
+      uscita double precision,
+      r double precision,
+      usd double precision,
+      chiusa_il timestamptz
+    )
+  `;
+}

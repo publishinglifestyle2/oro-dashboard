@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const INTERVALLO_MS = 60_000;
+const SPREAD_STIMATO = 0.35; // stessa costante usata server-side: qui serve solo per l'anteprima live
 
 interface Livello {
   prezzo: number;
@@ -65,6 +66,30 @@ interface RispostaApi {
   capitale: number;
   rischioPct: number;
 }
+interface Operazione {
+  id: number;
+  lato: "BUY" | "SELL";
+  entrata: number;
+  stop: number;
+  t1: number;
+  t2: number;
+  lotti: number;
+  rischioUsd: number;
+  motivo: string;
+  apertaIl: string;
+  stato: "aperta" | "chiusa";
+  esito?: string;
+  uscita?: number;
+  r?: number;
+  usd?: number;
+  chiusaIl?: string;
+}
+interface RispostaOperazioni {
+  ok: boolean;
+  errore?: string;
+  aperta: Operazione | null;
+  storico: Operazione[];
+}
 
 const it = (x: number, dec = 0) => x.toLocaleString("it-IT", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 const tondo = (x: number) => Math.round(x);
@@ -74,11 +99,14 @@ type StatoNotifiche = "non-supportate" | "default" | "granted" | "denied";
 
 export default function Dashboard() {
   const [dati, setDati] = useState<RispostaApi | null>(null);
+  const [operazioni, setOperazioni] = useState<RispostaOperazioni | null>(null);
   const [errore, setErrore] = useState<string | null>(null);
   const [caricando, setCaricando] = useState(true);
   const [ultimoFetch, setUltimoFetch] = useState<Date | null>(null);
   const [secondiProssimo, setSecondiProssimo] = useState(60);
   const [statoNotifiche, setStatoNotifiche] = useState<StatoNotifiche>("non-supportate");
+  const [azioneInCorso, setAzioneInCorso] = useState(false);
+  const [erroreAzione, setErroreAzione] = useState<string | null>(null);
   // chiave dell'ultimo segnale già notificato: evita di far suonare la stessa operazione
   // a ogni giro di polling finché resta valida.
   const ultimoAvvisato = useRef<string | null>(null);
@@ -92,6 +120,16 @@ export default function Dashboard() {
   const chiediNotifiche = useCallback(() => {
     if (!("Notification" in window)) return;
     Notification.requestPermission().then((esito) => setStatoNotifiche(esito as StatoNotifiche));
+  }, []);
+
+  const caricaOperazioni = useCallback(async () => {
+    try {
+      const res = await fetch("/api/operazioni", { cache: "no-store" });
+      const json: RispostaOperazioni = await res.json();
+      if (json.ok) setOperazioni(json);
+    } catch {
+      // silenzioso: il resto della dashboard funziona comunque senza il tracciamento manuale
+    }
   }, []);
 
   const aggiorna = useCallback(async () => {
@@ -121,7 +159,8 @@ export default function Dashboard() {
       setUltimoFetch(new Date());
       setSecondiProssimo(60);
     }
-  }, []);
+    caricaOperazioni();
+  }, [caricaOperazioni]);
 
   useEffect(() => {
     aggiorna();
@@ -133,6 +172,52 @@ export default function Dashboard() {
     const id = setInterval(() => setSecondiProssimo((s) => (s > 0 ? s - 1 : 0)), 1000);
     return () => clearInterval(id);
   }, []);
+
+  const apri = useCallback(
+    async (lato: "BUY" | "SELL", entrata: number, stop: number, t1: number, t2: number, motivo: string) => {
+      setAzioneInCorso(true);
+      setErroreAzione(null);
+      try {
+        const res = await fetch("/api/operazioni", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ azione: "apri", lato, entrata, stop, t1, t2, motivo }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.errore || "errore nell'apertura");
+        await caricaOperazioni();
+      } catch (e) {
+        setErroreAzione(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAzioneInCorso(false);
+      }
+    },
+    [caricaOperazioni]
+  );
+
+  const chiudi = useCallback(
+    async (id: number, esito: string, uscita: number) => {
+      setAzioneInCorso(true);
+      setErroreAzione(null);
+      try {
+        const res = await fetch("/api/operazioni", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ azione: "chiudi", id, esito, uscita }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.errore || "errore nella chiusura");
+        await caricaOperazioni();
+      } catch (e) {
+        setErroreAzione(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAzioneInCorso(false);
+      }
+    },
+    [caricaOperazioni]
+  );
+
+  const posizioneAperta = operazioni?.aperta ?? null;
 
   return (
     <main className="min-h-screen max-w-2xl mx-auto px-4 py-6 space-y-5">
@@ -166,14 +251,34 @@ export default function Dashboard() {
           errore: {errore}
         </div>
       )}
+      {erroreAzione && (
+        <div className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
+          {erroreAzione}
+        </div>
+      )}
 
       {dati && (
         <>
           <FonteBadge fonte={dati.fonte} affidabile={dati.affidabile} ritardoMin={dati.ritardoMin} />
           <PrezzoCard q={dati.quadro} />
           <LivelliCard q={dati.quadro} />
-          <SegnaleCard segnale={dati.segnale} sizing={dati.sizing} avviso={dati.avviso} capitale={dati.capitale} rischioPct={dati.rischioPct} />
-          <ComeMiMuovoCard scenari={dati.scenari} />
+
+          {posizioneAperta ? (
+            <PosizioneApertaCard op={posizioneAperta} prezzoAttuale={dati.quadro.prezzo} onChiudi={chiudi} bloccato={azioneInCorso} />
+          ) : (
+            <SegnaleCard
+              segnale={dati.segnale}
+              sizing={dati.sizing}
+              avviso={dati.avviso}
+              capitale={dati.capitale}
+              rischioPct={dati.rischioPct}
+              onApri={apri}
+              bloccato={azioneInCorso}
+            />
+          )}
+
+          {!posizioneAperta && <ComeMiMuovoCard scenari={dati.scenari} />}
+          {operazioni && operazioni.storico.length > 0 && <StoricoCard storico={operazioni.storico} />}
         </>
       )}
 
@@ -260,13 +365,20 @@ function SegnaleCard({
   avviso,
   capitale,
   rischioPct,
+  onApri,
+  bloccato,
 }: {
   segnale: Segnale;
   sizing: Sizing | null;
   avviso: string | null;
   capitale: number;
   rischioPct: number;
+  onApri: (lato: "BUY" | "SELL", entrata: number, stop: number, t1: number, t2: number, motivo: string) => Promise<void>;
+  bloccato: boolean;
 }) {
+  const [mostraForm, setMostraForm] = useState(false);
+  const [prezzoInserito, setPrezzoInserito] = useState("");
+
   if (segnale.lato === "ATTENDI") {
     return (
       <section className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4">
@@ -278,6 +390,7 @@ function SegnaleCard({
   }
   const s = segnale.scenario!;
   const buy = segnale.lato === "BUY";
+
   return (
     <section className={`rounded-xl p-4 border ${buy ? "border-emerald-700 bg-emerald-950/30" : "border-red-700 bg-red-950/30"}`}>
       <div className={`flex items-center gap-2 font-semibold ${buy ? "text-emerald-400" : "text-red-400"}`}>
@@ -312,6 +425,150 @@ function SegnaleCard({
       <p className="mt-2 text-xs text-neutral-500">
         a target 1 chiudi metà e porta lo stop a break-even. capitale {it(capitale)} usd, rischio impostato {rischioPct}%.
       </p>
+
+      {!mostraForm ? (
+        <button
+          onClick={() => {
+            setPrezzoInserito(s.entrata.toFixed(2));
+            setMostraForm(true);
+          }}
+          className={`mt-4 w-full rounded-lg py-2 text-sm font-medium transition ${
+            buy ? "bg-emerald-700 hover:bg-emerald-600" : "bg-red-700 hover:bg-red-600"
+          } text-white`}
+        >
+          ✅ sono entrato
+        </button>
+      ) : (
+        <div className="mt-4 rounded-lg bg-black/30 p-3 space-y-2">
+          <label className="text-xs text-neutral-400">a quale prezzo sei entrato davvero?</label>
+          <input
+            type="number"
+            step="0.01"
+            value={prezzoInserito}
+            onChange={(e) => setPrezzoInserito(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-3 py-1.5 text-sm tabular-nums outline-none focus:border-amber-500"
+          />
+          <div className="flex gap-2">
+            <button
+              disabled={bloccato}
+              onClick={async () => {
+                const entrataReale = parseFloat(prezzoInserito);
+                if (!Number.isFinite(entrataReale)) return;
+                await onApri(segnale.lato as "BUY" | "SELL", entrataReale, s.stop, s.t1, s.t2, segnale.motivo);
+                setMostraForm(false);
+              }}
+              className="flex-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm py-1.5"
+            >
+              conferma
+            </button>
+            <button onClick={() => setMostraForm(false)} className="rounded-md border border-neutral-700 px-3 text-sm text-neutral-400 hover:bg-neutral-800">
+              annulla
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PosizioneApertaCard({
+  op,
+  prezzoAttuale,
+  onChiudi,
+  bloccato,
+}: {
+  op: Operazione;
+  prezzoAttuale: number;
+  onChiudi: (id: number, esito: string, uscita: number) => Promise<void>;
+  bloccato: boolean;
+}) {
+  const buy = op.lato === "BUY";
+  const segno = buy ? 1 : -1;
+  const rischio = Math.abs(op.entrata - op.stop);
+  const rLive = rischio ? (segno * (prezzoAttuale - op.entrata) - SPREAD_STIMATO) / rischio : 0;
+  const usdLive = rLive * op.rischioUsd;
+
+  const toccatoStop = buy ? prezzoAttuale <= op.stop : prezzoAttuale >= op.stop;
+  const raggiuntoT2 = buy ? prezzoAttuale >= op.t2 : prezzoAttuale <= op.t2;
+  const raggiuntoT1 = buy ? prezzoAttuale >= op.t1 : prezzoAttuale <= op.t1;
+
+  let suggerimento: { testo: string; tono: "rosso" | "verde" | "neutro" };
+  if (toccatoStop) suggerimento = { testo: `🛑 il prezzo ha toccato il tuo stop (${it(op.stop, 2)}) — se non sei già uscito, valuta di farlo`, tono: "rosso" };
+  else if (raggiuntoT2) suggerimento = { testo: `🎯🎯 hai raggiunto il target 2 (${it(op.t2, 2)}) — valuta la chiusura completa`, tono: "verde" };
+  else if (raggiuntoT1) suggerimento = { testo: `🎯 hai raggiunto il target 1 (${it(op.t1, 2)}) — chiudi metà e porta lo stop a break-even (${it(op.entrata, 2)})`, tono: "verde" };
+  else suggerimento = { testo: `in corso: ${rLive >= 0 ? "+" : ""}${rLive.toFixed(2)}R (~${usdLive >= 0 ? "+" : ""}${it(usdLive, 2)} usd non realizzati)`, tono: "neutro" };
+
+  const bottoni: { etichetta: string; esito: string; uscita: number }[] = [
+    { etichetta: `🎯 T1 (${it(op.t1, 2)})`, esito: "target 1", uscita: op.t1 },
+    { etichetta: `🎯 T2 (${it(op.t2, 2)})`, esito: "target 2", uscita: op.t2 },
+    { etichetta: `🛑 stop (${it(op.stop, 2)})`, esito: "stop", uscita: op.stop },
+    { etichetta: `✋ a mercato (${it(prezzoAttuale, 2)})`, esito: "manuale", uscita: prezzoAttuale },
+  ];
+
+  return (
+    <section className={`rounded-xl p-4 border ${buy ? "border-emerald-700 bg-emerald-950/30" : "border-red-700 bg-red-950/30"}`}>
+      <div className={`flex items-center gap-2 font-semibold ${buy ? "text-emerald-400" : "text-red-400"}`}>
+        {buy ? "🟢" : "🔴"} posizione aperta — XAUUSD {op.lato}
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm">
+        <dt className="text-neutral-400">entrata (tua)</dt>
+        <dd className="text-right tabular-nums">{it(op.entrata, 2)}</dd>
+        <dt className="text-neutral-400">stop loss</dt>
+        <dd className="text-right tabular-nums">{it(op.stop, 2)}</dd>
+        <dt className="text-neutral-400">target 1 / 2</dt>
+        <dd className="text-right tabular-nums">{it(op.t1, 2)} / {it(op.t2, 2)}</dd>
+        <dt className="text-neutral-400">size</dt>
+        <dd className="text-right tabular-nums">{op.lotti.toFixed(2)} lotti</dd>
+      </dl>
+
+      <div
+        className={`mt-3 rounded-lg px-3 py-2 text-sm ${
+          suggerimento.tono === "rosso"
+            ? "bg-red-950/60 text-red-300"
+            : suggerimento.tono === "verde"
+              ? "bg-emerald-950/60 text-emerald-300"
+              : "bg-black/30 text-neutral-300"
+        }`}
+      >
+        {suggerimento.testo}
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        {bottoni.map((b) => (
+          <button
+            key={b.esito}
+            disabled={bloccato}
+            onClick={() => onChiudi(op.id, b.esito, b.uscita)}
+            className="rounded-md border border-neutral-700 py-2 text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
+          >
+            {b.etichetta}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-neutral-500">aperta il {new Date(op.apertaIl).toLocaleString("it-IT")}</p>
+    </section>
+  );
+}
+
+function StoricoCard({ storico }: { storico: Operazione[] }) {
+  return (
+    <section className="rounded-xl bg-neutral-900 p-4 space-y-2">
+      <h2 className="text-sm font-medium text-neutral-400 mb-1">storico operazioni</h2>
+      {storico.map((op) => (
+        <div key={op.id} className="flex items-center justify-between text-sm border-t border-neutral-800 pt-2 first:border-0 first:pt-0">
+          <div className="text-neutral-400">
+            <span className={op.lato === "BUY" ? "text-emerald-400" : "text-red-400"}>{op.lato}</span>{" "}
+            {it(op.entrata, 2)} → {op.uscita != null ? it(op.uscita, 2) : "?"}{" "}
+            <span className="text-neutral-600">({op.esito})</span>
+          </div>
+          <div className={`tabular-nums font-medium ${(op.r ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            {op.r != null ? `${op.r >= 0 ? "+" : ""}${op.r.toFixed(2)}R` : "—"}
+            {op.usd != null && (
+              <span className="text-neutral-500 font-normal"> ({op.usd >= 0 ? "+" : ""}{it(op.usd, 2)} usd)</span>
+            )}
+          </div>
+        </div>
+      ))}
     </section>
   );
 }
