@@ -447,11 +447,15 @@ function GraficoCard({
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#a3a3a3" },
       grid: { vertLines: { color: "#1f1f1f" }, horzLines: { color: "#1f1f1f" } },
       timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#404040" },
-      rightPriceScale: { borderColor: "#404040" },
+      // scala prezzi (e quindi le etichette dei livelli) a sinistra: a destra ci deve restare
+      // libera la parte più recente del grafico, altrimenti le etichette la coprono.
+      rightPriceScale: { visible: false },
+      leftPriceScale: { visible: true, borderColor: "#404040" },
       height: 280,
       width: contenitoreRef.current.clientWidth,
     });
     const serie = chart.addSeries(CandlestickSeries, {
+      priceScaleId: "left",
       upColor: "#34d399",
       downColor: "#f87171",
       borderVisible: false,
@@ -514,7 +518,7 @@ function GraficoCard({
 
   return (
     <section className="rounded-xl bg-neutral-900 p-4">
-      <h2 className="text-sm font-medium text-neutral-400 mb-2">grafico live (5 minuti)</h2>
+      <h2 className="text-sm font-medium text-neutral-400 mb-2">grafico live (1 minuto)</h2>
       <div ref={contenitoreRef} />
     </section>
   );

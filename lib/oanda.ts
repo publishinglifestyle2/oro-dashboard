@@ -34,13 +34,15 @@ async function fetchGranularita(
     }));
 }
 
-/** candele 1h (~30 giorni), 15m (~5 giorni) e 5m (~3 giorni, per superare i weekend) direttamente da oanda,
- * senza dover ricampionare dal minuto: più veloce e più leggero a ogni richiesta della dashboard. */
+/** candele 1h (~30 giorni), 15m (~5 giorni), 5m (~3 giorni) e 1m (~poche ore, solo per il grafico)
+ * direttamente da oanda, senza dover ricampionare dal minuto per le prime tre: più veloce e più
+ * leggero a ogni richiesta della dashboard. */
 export async function fetchOandaTutto(token: string, env: string) {
-  const [h1, m15, m5] = await Promise.all([
+  const [h1, m15, m5, m1] = await Promise.all([
     fetchGranularita(token, env, "H1", 720),
     fetchGranularita(token, env, "M15", 500),
     fetchGranularita(token, env, "M5", 850),
+    fetchGranularita(token, env, "M1", 500),
   ]);
-  return { h1, m15, m5 };
+  return { h1, m15, m5, m1 };
 }

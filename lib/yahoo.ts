@@ -37,5 +37,6 @@ export async function fetchYahooTutto() {
     h1: ricampiona(m1, 3600_000),
     m15: ricampiona(m1, 900_000),
     m5: ricampiona(m1, 300_000),
+    m1,
   };
 }
