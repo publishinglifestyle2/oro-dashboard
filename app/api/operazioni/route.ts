@@ -30,16 +30,29 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     if (body.azione === "apri") {
-      const { lato, entrata, stop, t1, t2, motivo } = body;
+      const { lato, entrata, stop, t1, t2, motivo, apertaIl } = body;
       if (!["BUY", "SELL"].includes(lato) || ![entrata, stop, t1, t2].every((v) => typeof v === "number" && Number.isFinite(v))) {
         return NextResponse.json({ ok: false, errore: "dati mancanti o non validi" }, { status: 400 });
+      }
+      if (apertaIl !== undefined && (typeof apertaIl !== "string" || Number.isNaN(Date.parse(apertaIl)))) {
+        return NextResponse.json({ ok: false, errore: "orario di entrata non valido" }, { status: 400 });
       }
       // la size si ricalcola sul prezzo di entrata VERO (può differire da quello suggerito),
       // con lo stesso capitale/rischio% di tutto il resto del sito.
       const capitale = parseFloat(process.env.CAPITALE || "950");
       const rischioPct = parseFloat(process.env.RISCHIO_PCT || "2");
       const sizing = calcolaSize(capitale, rischioPct, Math.abs(entrata - stop));
-      const op = await apriOperazione({ lato, entrata, stop, t1, t2, lotti: sizing.lotti, rischioUsd: sizing.rischioUsd, motivo: motivo || "" });
+      const op = await apriOperazione({
+        lato,
+        entrata,
+        stop,
+        t1,
+        t2,
+        lotti: sizing.lotti,
+        rischioUsd: sizing.rischioUsd,
+        motivo: motivo || "",
+        apertaIl,
+      });
       return NextResponse.json({ ok: true, operazione: op });
     }
 

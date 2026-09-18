@@ -71,15 +71,24 @@ export async function apriOperazione(dati: {
   lotti: number;
   rischioUsd: number;
   motivo: string;
+  apertaIl?: string; // iso, per registrare un'entrata manuale a un orario diverso da adesso
 }): Promise<Operazione> {
   const giaAperta = await operazioneAperta();
   if (giaAperta) throw new Error("c'è già una posizione aperta: chiudila prima di aprirne un'altra");
   const sql = getSql();
-  const righe = (await sql`
-    insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, motivo)
-    values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${dati.motivo})
-    returning *
-  `) as RigaGrezza[];
+  const righe = (
+    dati.apertaIl
+      ? await sql`
+          insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, motivo, aperta_il)
+          values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${dati.motivo}, ${dati.apertaIl})
+          returning *
+        `
+      : await sql`
+          insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, motivo)
+          values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${dati.motivo})
+          returning *
+        `
+  ) as RigaGrezza[];
   return riga(righe[0]);
 }
 

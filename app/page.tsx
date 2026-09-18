@@ -239,14 +239,14 @@ export default function Dashboard() {
   }, []);
 
   const apri = useCallback(
-    async (lato: "BUY" | "SELL", entrata: number, stop: number, t1: number, t2: number, motivo: string) => {
+    async (lato: "BUY" | "SELL", entrata: number, stop: number, t1: number, t2: number, motivo: string, apertaIl?: string) => {
       setAzioneInCorso(true);
       setErroreAzione(null);
       try {
         const res = await fetch("/api/operazioni", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ azione: "apri", lato, entrata, stop, t1, t2, motivo }),
+          body: JSON.stringify({ azione: "apri", lato, entrata, stop, t1, t2, motivo, apertaIl }),
         });
         const json = await res.json();
         if (!json.ok) throw new Error(json.errore || "errore nell'apertura");
@@ -373,6 +373,7 @@ export default function Dashboard() {
             />
           )}
 
+          {!posizioneAperta && <EntrataManualeCard q={dati.quadro} scenari={dati.scenari} onApri={apri} bloccato={azioneInCorso} />}
           {!posizioneAperta && <ComeMiMuovoCard scenari={dati.scenari} />}
           {operazioni && operazioni.storico.length > 0 && <StoricoCard storico={operazioni.storico} />}
         </>
@@ -695,6 +696,153 @@ function SegnaleCard({
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+/** formatta una data per l'input datetime-local, in ora locale del browser (non UTC). */
+function perInputDatetime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function EntrataManualeCard({
+  q,
+  scenari,
+  onApri,
+  bloccato,
+}: {
+  q: Quadro;
+  scenari: [Scenario, Scenario, Scenario, Scenario];
+  onApri: (lato: "BUY" | "SELL", entrata: number, stop: number, t1: number, t2: number, motivo: string, apertaIl?: string) => Promise<void>;
+  bloccato: boolean;
+}) {
+  const [aperto, setAperto] = useState(false);
+  const [lato, setLato] = useState<"BUY" | "SELL">("BUY");
+  const [entrata, setEntrata] = useState("");
+  const [ora, setOra] = useState("");
+  const [stop, setStop] = useState("");
+  const [t1, setT1] = useState("");
+  const [t2, setT2] = useState("");
+
+  const apriForm = () => {
+    const [rimb, , , srimb] = scenari;
+    const base = lato === "BUY" ? rimb : srimb;
+    setEntrata(q.prezzo.toFixed(2));
+    setOra(perInputDatetime(new Date()));
+    setStop(base.stop.toFixed(2));
+    setT1(base.t1.toFixed(2));
+    setT2(base.t2.toFixed(2));
+    setAperto(true);
+  };
+
+  if (!aperto) {
+    return (
+      <button
+        onClick={apriForm}
+        className="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-2 text-sm text-neutral-400 hover:bg-neutral-800 transition text-left"
+      >
+        ✍️ inserisci un&apos;entrata manuale — prezzo e orario a tua scelta, anche se sei entrato di tua iniziativa
+      </button>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-neutral-700 bg-neutral-900 p-4 space-y-3">
+      <h2 className="text-sm font-medium text-neutral-300">entrata manuale</h2>
+
+      <div className="flex gap-2">
+        {(["BUY", "SELL"] as const).map((l) => (
+          <button
+            key={l}
+            onClick={() => {
+              setLato(l);
+              const [rimb, , , srimb] = scenari;
+              const base = l === "BUY" ? rimb : srimb;
+              setStop(base.stop.toFixed(2));
+              setT1(base.t1.toFixed(2));
+              setT2(base.t2.toFixed(2));
+            }}
+            className={`flex-1 rounded-md py-1.5 text-sm font-medium transition ${
+              lato === l ? (l === "BUY" ? "bg-emerald-700 text-white" : "bg-red-700 text-white") : "bg-neutral-800 text-neutral-400"
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <label className="space-y-1">
+          <span className="text-neutral-400">prezzo di entrata</span>
+          <input
+            type="number"
+            step="0.01"
+            value={entrata}
+            onChange={(e) => setEntrata(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-neutral-400">orario di entrata</span>
+          <input
+            type="datetime-local"
+            value={ora}
+            onChange={(e) => setOra(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-neutral-400">stop loss</span>
+          <input
+            type="number"
+            step="0.01"
+            value={stop}
+            onChange={(e) => setStop(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <div />
+        <label className="space-y-1">
+          <span className="text-neutral-400">target 1</span>
+          <input
+            type="number"
+            step="0.01"
+            value={t1}
+            onChange={(e) => setT1(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-neutral-400">target 2</span>
+          <input
+            type="number"
+            step="0.01"
+            value={t2}
+            onChange={(e) => setT2(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+      </div>
+
+      <div className="flex gap-2 pt-1">
+        <button
+          disabled={bloccato}
+          onClick={async () => {
+            const e = parseFloat(entrata), s = parseFloat(stop), tt1 = parseFloat(t1), tt2 = parseFloat(t2);
+            if (![e, s, tt1, tt2].every(Number.isFinite) || !ora) return;
+            const apertaIl = new Date(ora).toISOString();
+            await onApri(lato, e, s, tt1, tt2, "entrata manuale", apertaIl);
+            setAperto(false);
+          }}
+          className="flex-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm py-1.5"
+        >
+          registra l&apos;operazione
+        </button>
+        <button onClick={() => setAperto(false)} className="rounded-md border border-neutral-700 px-3 text-sm text-neutral-400 hover:bg-neutral-800">
+          annulla
+        </button>
+      </div>
     </section>
   );
 }
