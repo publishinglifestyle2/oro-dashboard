@@ -50,3 +50,24 @@ export async function assicuraSchemaOperazioni() {
     )
   `;
 }
+
+export async function assicuraSchemaPush() {
+  const sql = getSql();
+  await sql`
+    create table if not exists abbonamenti_push (
+      endpoint text primary key,
+      p256dh text not null,
+      auth text not null,
+      creato_il timestamptz not null default now()
+    )
+  `;
+  // riga unica: tiene traccia dell'ultimo segnale già notificato via push, per non rimandare
+  // la stessa notifica a ogni candela finché il segnale resta lo stesso.
+  await sql`
+    create table if not exists push_stato (
+      id int primary key default 1,
+      ultima_chiave text
+    )
+  `;
+  await sql`insert into push_stato (id, ultima_chiave) values (1, null) on conflict (id) do nothing`;
+}

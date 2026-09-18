@@ -96,6 +96,15 @@ const tondo = (x: number) => Math.round(x);
 const rr = (s: Scenario, target: number) => Math.abs(target - s.entrata) / Math.abs(s.entrata - s.stop);
 
 type StatoNotifiche = "non-supportate" | "default" | "granted" | "denied";
+type StatoPush = "controllo" | "non-supportate" | "richiede-installazione" | "da-attivare" | "attiva" | "errore";
+
+// converte la chiave pubblica VAPID (base64 url-safe) nel formato che pushManager.subscribe si aspetta
+function base64UrlAUint8Array(base64Url: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
 
 export default function Dashboard() {
   const [dati, setDati] = useState<RispostaApi | null>(null);
@@ -105,6 +114,7 @@ export default function Dashboard() {
   const [ultimoFetch, setUltimoFetch] = useState<Date | null>(null);
   const [secondiProssimo, setSecondiProssimo] = useState(60);
   const [statoNotifiche, setStatoNotifiche] = useState<StatoNotifiche>("non-supportate");
+  const [statoPush, setStatoPush] = useState<StatoPush>("controllo");
   const [azioneInCorso, setAzioneInCorso] = useState(false);
   const [erroreAzione, setErroreAzione] = useState<string | null>(null);
   // chiave dell'ultimo segnale già notificato: evita di far suonare la stessa operazione
@@ -120,6 +130,59 @@ export default function Dashboard() {
   const chiediNotifiche = useCallback(() => {
     if (!("Notification" in window)) return;
     Notification.requestPermission().then((esito) => setStatoNotifiche(esito as StatoNotifiche));
+  }, []);
+
+  // notifiche push vere (arrivano anche a telefono bloccato/app chiusa). su iPhone Apple le
+  // permette SOLO se il sito è stato aggiunto alla schermata Home (non da una scheda Safari normale).
+  useEffect(() => {
+    (async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setStatoPush("non-supportate");
+        return;
+      }
+      const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
+      if (iOS && !standalone) {
+        setStatoPush("richiede-installazione");
+        return;
+      }
+      try {
+        const reg = await navigator.serviceWorker.register("/sw.js");
+        const sub = await reg.pushManager.getSubscription();
+        setStatoPush(sub ? "attiva" : "da-attivare");
+      } catch {
+        setStatoPush("errore");
+      }
+    })();
+  }, []);
+
+  const attivaPush = useCallback(async () => {
+    try {
+      const risp = await fetch("/api/push");
+      const { publicKey } = await risp.json();
+      if (!publicKey) {
+        setStatoPush("errore");
+        return;
+      }
+      const permesso = await Notification.requestPermission();
+      if (permesso !== "granted") {
+        setStatoPush("errore");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlAUint8Array(publicKey) as BufferSource,
+      });
+      await fetch("/api/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ azione: "abbona", subscription: sub.toJSON() }),
+      });
+      setStatoPush("attiva");
+    } catch {
+      setStatoPush("errore");
+    }
   }, []);
 
   const caricaOperazioni = useCallback(async () => {
@@ -241,6 +304,27 @@ export default function Dashboard() {
       {statoNotifiche === "denied" && (
         <div className="w-full rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-2 text-xs text-neutral-500">
           notifiche bloccate dal browser — per riattivarle: impostazioni del sito → notifiche
+        </div>
+      )}
+
+      {statoPush === "richiede-installazione" && (
+        <div className="w-full rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-2 text-sm text-amber-300">
+          📱 per le notifiche push su iPhone (arrivano anche a telefono bloccato): tocca{" "}
+          <span className="font-medium">Condividi</span> in Safari → <span className="font-medium">Aggiungi a Home</span>,
+          poi apri l&apos;app dall&apos;icona sulla schermata Home invece che da Safari.
+        </div>
+      )}
+      {statoPush === "da-attivare" && (
+        <button
+          onClick={attivaPush}
+          className="w-full rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-2 text-sm text-amber-300 hover:bg-amber-950/70 transition text-left"
+        >
+          📱 attiva le notifiche push sul telefono — arrivano anche ad app chiusa/telefono bloccato
+        </button>
+      )}
+      {statoPush === "attiva" && (
+        <div className="w-full rounded-lg border border-emerald-800 bg-emerald-950/30 px-4 py-2 text-xs text-emerald-400">
+          📱 notifiche push attive su questo dispositivo
         </div>
       )}
 
