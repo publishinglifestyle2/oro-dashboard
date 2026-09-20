@@ -19,20 +19,24 @@ export async function GET() {
     const oraInizio = parseFloat(process.env.ORA_INIZIO || "0");
     const oraFine = parseFloat(process.env.ORA_FINE || "24");
 
-    let h1, m15, m5, m1, fonte: string, affidabile: boolean;
+    let h1, m15, m5, m1, fonte: string, affidabile: boolean, minutiCandela: number;
     const daTradingView = await fetchDbTutto().catch(() => null);
     if (daTradingView) {
-      ({ h1, m15, m5, m1 } = daTradingView);
+      ({ h1, m15, m5 } = daTradingView);
+      m1 = undefined; // il webhook manda candele 5m dirette, non più il minuto grezzo
       fonte = "TradingView Premium (webhook in tempo reale)";
       affidabile = true;
+      minutiCandela = 5;
     } else if (token) {
       ({ h1, m15, m5, m1 } = await fetchOandaTutto(token, env));
       fonte = `OANDA (${env === "practice" ? "conto practice" : "conto live"})`;
       affidabile = true;
+      minutiCandela = 1;
     } else {
       ({ h1, m15, m5, m1 } = await fetchYahooTutto());
       fonte = "Yahoo GC=F — ripiego, quota diversa dallo spot e in ritardo: non per operare";
       affidabile = false;
+      minutiCandela = 1;
     }
 
     if (m5.length < 40 || m15.length < 40 || h1.length < 40) {
@@ -60,8 +64,8 @@ export async function GET() {
 
     const ritardoMin = (Date.now() - quadro.t) / 60000;
 
-    // per il grafico: ultime candele 1m (~5 ore), tempo in secondi come vuole lightweight-charts.
-    // se la fonte non ha 1m (non dovrebbe succedere: tutte e tre ora lo restituiscono) ricade sul 5m.
+    // per il grafico: candele più fini disponibili (1m su oanda/yahoo, 5m su tradingview —
+    // vedi lib/tvdb.ts sul perché), tempo in secondi come vuole lightweight-charts.
     const fonteGrafico = m1 && m1.length > 0 ? m1 : m5;
     const candeleGrafico = fonteGrafico.slice(-300).map((c) => ({
       time: Math.floor(c.time / 1000),
@@ -85,6 +89,7 @@ export async function GET() {
       capitale,
       rischioPct,
       candeleGrafico,
+      minutiCandela,
     });
   } catch (e) {
     const messaggio = e instanceof Error ? e.message : String(e);

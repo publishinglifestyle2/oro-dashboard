@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "seed": "dotenv -e .env.local -- tsx scripts/seed.ts"
+    "seed": "dotenv -e .env.local -- tsx scripts/seed.ts",
+    "migra-a-5m": "dotenv -e .env.local -- tsx scripts/migra-a-5m.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

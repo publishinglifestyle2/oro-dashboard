@@ -27,6 +27,24 @@ export async function assicuraSchema() {
   `;
 }
 
+/** candele a 5 minuti dal webhook TradingView (versione "gratuita": una candela ogni 5 minuti
+ * invece che ogni minuto, così il database si riaddormenta tra una chiamata e l'altra invece di
+ * restare sveglio 24/7 — è quello che consumava la quota gratuita di Neon in ~2 giorni). */
+export async function assicuraSchemaCandele5m() {
+  const sql = getSql();
+  await sql`
+    create table if not exists candele_5m (
+      t bigint primary key,
+      open double precision not null,
+      high double precision not null,
+      low double precision not null,
+      close double precision not null,
+      volume double precision not null default 0,
+      ricevuto_at timestamptz not null default now()
+    )
+  `;
+}
+
 export async function assicuraSchemaOperazioni() {
   const sql = getSql();
   await sql`

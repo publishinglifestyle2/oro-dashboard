@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assicuraSchema, assicuraSchemaPush, getSql } from "@/lib/db";
+import { assicuraSchemaCandele5m, assicuraSchemaPush, getSql } from "@/lib/db";
 import { fetchDbTutto } from "@/lib/tvdb";
 import { costruisciQuadro, costruisciScenari, valutaTrigger, rr, RR_MINIMO_T2 } from "@/lib/motore";
 import { inviaSeNuovo } from "@/lib/push";
@@ -12,9 +12,8 @@ let schemaPronto = false;
 let schemaPushPronto = false;
 
 /** dopo ogni candela ricontrolla il segnale, e se è un nuovo BUY/SELL manda la notifica push.
- * gira solo se la candela chiude un blocco di 5 minuti — stessa cadenza del motore. */
-async function controllaEAvvisa(t: number) {
-  if (Math.floor(t / 60_000) % 5 !== 4) return;
+ * ogni candela ricevuta è già una chiusura di 5 minuti (il Pine Script gira su grafico 5m). */
+async function controllaEAvvisa() {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return; // push non configurata: salta senza errori
 
   const dati = await fetchDbTutto();
@@ -44,7 +43,7 @@ async function controllaEAvvisa(t: number) {
   );
 }
 
-// TradingView chiama questo indirizzo a ogni chiusura di candela 1 minuto (vedi il Pine Script).
+// TradingView chiama questo indirizzo a ogni chiusura di candela 5 minuti (vedi il Pine Script).
 // La chiave nell'url protegge l'endpoint: senza TV_WEBHOOK_SECRET configurata, rifiuta tutto.
 export async function POST(req: NextRequest) {
   const chiave = req.nextUrl.searchParams.get("key");
@@ -69,12 +68,12 @@ export async function POST(req: NextRequest) {
 
   try {
     if (!schemaPronto) {
-      await assicuraSchema();
+      await assicuraSchemaCandele5m();
       schemaPronto = true;
     }
     const sql = getSql();
     await sql`
-      insert into candele_1m (t, open, high, low, close, volume)
+      insert into candele_5m (t, open, high, low, close, volume)
       values (${t as number}, ${open as number}, ${high as number}, ${low as number}, ${close as number}, ${volume})
       on conflict (t) do update set
         open = excluded.open, high = excluded.high, low = excluded.low,
@@ -88,7 +87,7 @@ export async function POST(req: NextRequest) {
   // la candela è già salvata: un problema qui (push non configurata, rete, ecc.) non deve
   // far fallire la risposta a TradingView, altrimenti riprova e si perde comunque il dato.
   try {
-    await controllaEAvvisa(t as number);
+    await controllaEAvvisa();
   } catch (e) {
     console.error("controllo segnale/push fallito:", e);
   }

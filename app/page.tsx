@@ -67,6 +67,7 @@ interface RispostaApi {
   capitale: number;
   rischioPct: number;
   candeleGrafico: { time: number; open: number; high: number; low: number; close: number }[];
+  minutiCandela: number;
 }
 interface Operazione {
   id: number;
@@ -360,7 +361,13 @@ export default function Dashboard() {
           <div className="space-y-5 lg:space-y-0 lg:grid lg:grid-cols-[1.6fr_1fr] lg:gap-5 lg:items-start">
             <div className="space-y-5">
               <PrezzoCard q={dati.quadro} />
-              <GraficoCard candele={dati.candeleGrafico} q={dati.quadro} segnale={dati.segnale} posizioneAperta={posizioneAperta} />
+              <GraficoCard
+                candele={dati.candeleGrafico}
+                minutiCandela={dati.minutiCandela}
+                q={dati.quadro}
+                segnale={dati.segnale}
+                posizioneAperta={posizioneAperta}
+              />
               <LivelliCard q={dati.quadro} />
             </div>
 
@@ -435,11 +442,13 @@ function PrezzoCard({ q }: { q: Quadro }) {
 
 function GraficoCard({
   candele,
+  minutiCandela,
   q,
   segnale,
   posizioneAperta,
 }: {
   candele: { time: number; open: number; high: number; low: number; close: number }[];
+  minutiCandela: number;
   q: Quadro;
   segnale: Segnale;
   posizioneAperta: Operazione | null;
@@ -550,7 +559,9 @@ function GraficoCard({
 
   return (
     <section className="rounded-xl bg-neutral-900 p-4">
-      <h2 className="text-sm font-medium text-neutral-400 mb-2">grafico live (1 minuto)</h2>
+      <h2 className="text-sm font-medium text-neutral-400 mb-2">
+        grafico live ({minutiCandela} minut{minutiCandela === 1 ? "o" : "i"})
+      </h2>
       <div className="relative">
         <div ref={contenitoreRef} />
         {etichette.map((e, i) => (
