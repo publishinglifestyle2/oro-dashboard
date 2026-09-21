@@ -306,6 +306,50 @@ export default function Dashboard() {
     [caricaOperazioni]
   );
 
+  const modificaStorico = useCallback(
+    async (id: number, dati: Partial<Pick<Operazione, "lato" | "entrata" | "stop" | "t1" | "t2" | "uscita" | "esito">>) => {
+      setAzioneInCorso(true);
+      setErroreAzione(null);
+      try {
+        const res = await fetch("/api/operazioni", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ azione: "modifica-storico", id, ...dati }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.errore || "errore nella modifica");
+        await caricaOperazioni();
+      } catch (e) {
+        setErroreAzione(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAzioneInCorso(false);
+      }
+    },
+    [caricaOperazioni]
+  );
+
+  const elimina = useCallback(
+    async (id: number) => {
+      setAzioneInCorso(true);
+      setErroreAzione(null);
+      try {
+        const res = await fetch("/api/operazioni", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ azione: "elimina", id }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.errore || "errore nell'eliminazione");
+        await caricaOperazioni();
+      } catch (e) {
+        setErroreAzione(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAzioneInCorso(false);
+      }
+    },
+    [caricaOperazioni]
+  );
+
   const posizioneAperta = operazioni?.aperta ?? null;
 
   return (
@@ -417,7 +461,9 @@ export default function Dashboard() {
 
               {!posizioneAperta && <EntrataManualeCard q={dati.quadro} scenari={dati.scenari} onApri={apri} bloccato={azioneInCorso} />}
               {!posizioneAperta && <ComeMiMuovoCard scenari={dati.scenari} />}
-              {operazioni && operazioni.storico.length > 0 && <StoricoCard storico={operazioni.storico} />}
+              {operazioni && operazioni.storico.length > 0 && (
+                <StoricoCard storico={operazioni.storico} onModifica={modificaStorico} onElimina={elimina} bloccato={azioneInCorso} />
+              )}
             </div>
           </div>
         </>
@@ -1083,26 +1129,156 @@ function PosizioneApertaCard({
   );
 }
 
-function StoricoCard({ storico }: { storico: Operazione[] }) {
+function StoricoCard({
+  storico,
+  onModifica,
+  onElimina,
+  bloccato,
+}: {
+  storico: Operazione[];
+  onModifica: (id: number, dati: Partial<Pick<Operazione, "lato" | "entrata" | "stop" | "t1" | "t2" | "uscita" | "esito">>) => Promise<void>;
+  onElimina: (id: number) => Promise<void>;
+  bloccato: boolean;
+}) {
   return (
     <section className="rounded-xl bg-neutral-900 p-4 space-y-2">
-      <h2 className="text-sm font-medium text-neutral-400 mb-1">storico operazioni</h2>
+      <h2 className="text-sm font-medium text-neutral-400 mb-1">storico operazioni — tocca una riga per correggerla</h2>
       {storico.map((op) => (
-        <div key={op.id} className="flex items-center justify-between text-sm border-t border-neutral-800 pt-2 first:border-0 first:pt-0">
-          <div className="text-neutral-400">
-            <span className={op.lato === "BUY" ? "text-emerald-400" : "text-red-400"}>{op.lato}</span>{" "}
-            {it(op.entrata, 2)} → {op.uscita != null ? it(op.uscita, 2) : "?"}{" "}
-            <span className="text-neutral-600">({op.esito})</span>
-          </div>
-          <div className={`tabular-nums font-medium ${(op.r ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-            {op.r != null ? `${op.r >= 0 ? "+" : ""}${op.r.toFixed(2)}R` : "—"}
-            {op.usd != null && (
-              <span className="text-neutral-500 font-normal"> ({op.usd >= 0 ? "+" : ""}{it(op.usd, 2)} usd)</span>
-            )}
-          </div>
-        </div>
+        <RigaStorico key={op.id} op={op} onModifica={onModifica} onElimina={onElimina} bloccato={bloccato} />
       ))}
     </section>
+  );
+}
+
+function RigaStorico({
+  op,
+  onModifica,
+  onElimina,
+  bloccato,
+}: {
+  op: Operazione;
+  onModifica: (id: number, dati: Partial<Pick<Operazione, "lato" | "entrata" | "stop" | "t1" | "t2" | "uscita" | "esito">>) => Promise<void>;
+  onElimina: (id: number) => Promise<void>;
+  bloccato: boolean;
+}) {
+  const [aperta, setAperta] = useState(false);
+  const [confermaElimina, setConfermaElimina] = useState(false);
+  const [lato, setLato] = useState<"BUY" | "SELL">(op.lato);
+  const [entrata, setEntrata] = useState(op.entrata.toFixed(2));
+  const [stop, setStop] = useState(op.stop.toFixed(2));
+  const [t1, setT1] = useState(op.t1.toFixed(2));
+  const [t2, setT2] = useState(op.t2.toFixed(2));
+  const [uscita, setUscita] = useState((op.uscita ?? op.entrata).toFixed(2));
+  const [esito, setEsito] = useState(op.esito ?? "manuale");
+
+  const apri = () => {
+    setLato(op.lato);
+    setEntrata(op.entrata.toFixed(2));
+    setStop(op.stop.toFixed(2));
+    setT1(op.t1.toFixed(2));
+    setT2(op.t2.toFixed(2));
+    setUscita((op.uscita ?? op.entrata).toFixed(2));
+    setEsito(op.esito ?? "manuale");
+    setConfermaElimina(false);
+    setAperta(!aperta);
+  };
+
+  return (
+    <div className="border-t border-neutral-800 pt-2 first:border-0 first:pt-0">
+      <button onClick={apri} className="w-full flex items-center justify-between text-sm text-left hover:opacity-80">
+        <div className="text-neutral-400">
+          <span className={op.lato === "BUY" ? "text-emerald-400" : "text-red-400"}>{op.lato}</span>{" "}
+          {it(op.entrata, 2)} → {op.uscita != null ? it(op.uscita, 2) : "?"}{" "}
+          <span className="text-neutral-600">({op.esito})</span>
+        </div>
+        <div className={`tabular-nums font-medium ${(op.r ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+          {op.r != null ? `${op.r >= 0 ? "+" : ""}${op.r.toFixed(2)}R` : "—"}
+          {op.usd != null && <span className="text-neutral-500 font-normal"> ({op.usd >= 0 ? "+" : ""}{it(op.usd, 2)} usd)</span>}
+        </div>
+      </button>
+
+      {aperta && (
+        <div className="mt-2 rounded-lg bg-black/30 p-3 space-y-2">
+          <div className="flex gap-2">
+            {(["BUY", "SELL"] as const).map((l) => (
+              <button
+                key={l}
+                onClick={() => setLato(l)}
+                className={`flex-1 rounded-md py-1 text-xs font-medium transition ${
+                  lato === l ? (l === "BUY" ? "bg-emerald-700 text-white" : "bg-red-700 text-white") : "bg-neutral-800 text-neutral-400"
+                }`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <CampoNumero etichetta="entrata" valore={entrata} onChange={setEntrata} />
+            <CampoNumero etichetta="stop" valore={stop} onChange={setStop} />
+            <CampoNumero etichetta="uscita" valore={uscita} onChange={setUscita} />
+            <CampoNumero etichetta="target 1" valore={t1} onChange={setT1} />
+            <CampoNumero etichetta="target 2" valore={t2} onChange={setT2} />
+            <label className="space-y-1">
+              <span className="text-neutral-400">esito</span>
+              <input
+                type="text"
+                value={esito}
+                onChange={(e) => setEsito(e.target.value)}
+                className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 outline-none focus:border-amber-500"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              disabled={bloccato}
+              onClick={async () => {
+                const e = parseFloat(entrata), s = parseFloat(stop), tt1 = parseFloat(t1), tt2 = parseFloat(t2), u = parseFloat(uscita);
+                if (![e, s, tt1, tt2, u].every(Number.isFinite)) return;
+                await onModifica(op.id, { lato, entrata: e, stop: s, t1: tt1, t2: tt2, uscita: u, esito });
+                setAperta(false);
+              }}
+              className="flex-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm py-1.5"
+            >
+              salva correzioni
+            </button>
+            {!confermaElimina ? (
+              <button
+                onClick={() => setConfermaElimina(true)}
+                className="rounded-md border border-red-800 px-3 text-sm text-red-400 hover:bg-red-950/40"
+              >
+                elimina
+              </button>
+            ) : (
+              <button
+                disabled={bloccato}
+                onClick={() => onElimina(op.id)}
+                className="rounded-md bg-red-700 hover:bg-red-600 disabled:opacity-50 px-3 text-sm text-white"
+              >
+                confermi? tocca di nuovo
+              </button>
+            )}
+            <button onClick={() => setAperta(false)} className="rounded-md border border-neutral-700 px-3 text-sm text-neutral-400 hover:bg-neutral-800">
+              annulla
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CampoNumero({ etichetta, valore, onChange }: { etichetta: string; valore: string; onChange: (v: string) => void }) {
+  return (
+    <label className="space-y-1">
+      <span className="text-neutral-400">{etichetta}</span>
+      <input
+        type="number"
+        step="0.01"
+        value={valore}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+      />
+    </label>
   );
 }
 

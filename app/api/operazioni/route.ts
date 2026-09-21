@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { assicuraSchemaOperazioni } from "@/lib/db";
-import { apriOperazione, chiudiOperazione, modificaOperazione, operazioneAperta, storicoOperazioni } from "@/lib/operazioni";
+import {
+  apriOperazione,
+  chiudiOperazione,
+  eliminaOperazione,
+  modificaOperazione,
+  modificaStorico,
+  operazioneAperta,
+  storicoOperazioni,
+} from "@/lib/operazioni";
 import { calcolaSize } from "@/lib/motore";
 
 export const dynamic = "force-dynamic";
@@ -79,7 +87,36 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, operazione: op });
     }
 
-    return NextResponse.json({ ok: false, errore: "azione sconosciuta (usa 'apri', 'chiudi' o 'modifica')" }, { status: 400 });
+    if (body.azione === "modifica-storico") {
+      const { id, lato, entrata, stop, t1, t2, uscita, esito } = body;
+      if (typeof id !== "number") {
+        return NextResponse.json({ ok: false, errore: "id mancante" }, { status: 400 });
+      }
+      if (lato !== undefined && !["BUY", "SELL"].includes(lato)) {
+        return NextResponse.json({ ok: false, errore: "lato non valido" }, { status: 400 });
+      }
+      for (const v of [entrata, stop, t1, t2, uscita]) {
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) {
+          return NextResponse.json({ ok: false, errore: "valore non valido" }, { status: 400 });
+        }
+      }
+      const op = await modificaStorico(id, { lato, entrata, stop, t1, t2, uscita, esito });
+      return NextResponse.json({ ok: true, operazione: op });
+    }
+
+    if (body.azione === "elimina") {
+      const { id } = body;
+      if (typeof id !== "number") {
+        return NextResponse.json({ ok: false, errore: "id mancante" }, { status: 400 });
+      }
+      await eliminaOperazione(id);
+      return NextResponse.json({ ok: true });
+    }
+
+    return NextResponse.json(
+      { ok: false, errore: "azione sconosciuta (usa 'apri', 'chiudi', 'modifica', 'modifica-storico' o 'elimina')" },
+      { status: 400 }
+    );
   } catch (e) {
     return NextResponse.json({ ok: false, errore: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }

@@ -114,6 +114,49 @@ export async function modificaOperazione(id: number, dati: { stop?: number; t1?:
   return riga(aggiornate[0]);
 }
 
+/** corregge un'operazione GIÀ CHIUSA (es. un dato inserito sbagliato) e ricalcola R/usd sui
+ * valori aggiornati, con la stessa formula di chiudiOperazione. Se cambi entrata o stop, il
+ * rischio_originale si ricalcola di conseguenza (stai correggendo un fatto, non spostando uno
+ * stop in corsa). Lotti e rischio_usd (la size) restano quelli con cui hai aperto: correggere un
+ * prezzo non ridimensiona la posizione. */
+export async function modificaStorico(
+  id: number,
+  dati: { lato?: "BUY" | "SELL"; entrata?: number; stop?: number; t1?: number; t2?: number; uscita?: number; esito?: string }
+): Promise<Operazione> {
+  const sql = getSql();
+  const righe = (await sql`select * from operazioni where id = ${id} and stato = 'chiusa'`) as RigaGrezza[];
+  if (!righe.length) throw new Error("operazione non trovata o non ancora chiusa");
+  const attuale = riga(righe[0]);
+
+  const lato = dati.lato ?? attuale.lato;
+  const entrata = dati.entrata ?? attuale.entrata;
+  const stop = dati.stop ?? attuale.stop;
+  const t1 = dati.t1 ?? attuale.t1;
+  const t2 = dati.t2 ?? attuale.t2;
+  const uscita = dati.uscita ?? attuale.uscita ?? entrata;
+  const esito = dati.esito ?? attuale.esito ?? "manuale";
+
+  const rischioOriginale = Math.abs(entrata - stop);
+  const segno = lato === "BUY" ? 1 : -1;
+  const r = rischioOriginale ? (segno * (uscita - entrata) - SPREAD_STIMATO) / rischioOriginale : 0;
+  const usd = r * attuale.rischioUsd;
+
+  const aggiornate = (await sql`
+    update operazioni
+    set lato = ${lato}, entrata = ${entrata}, stop = ${stop}, t1 = ${t1}, t2 = ${t2},
+        rischio_originale = ${rischioOriginale}, uscita = ${uscita}, esito = ${esito}, r = ${r}, usd = ${usd}
+    where id = ${id}
+    returning *
+  `) as RigaGrezza[];
+  return riga(aggiornate[0]);
+}
+
+/** cancella un'operazione (aperta o chiusa) dallo storico — es. una registrata per sbaglio. */
+export async function eliminaOperazione(id: number): Promise<void> {
+  const sql = getSql();
+  await sql`delete from operazioni where id = ${id}`;
+}
+
 export async function chiudiOperazione(id: number, esito: string, uscita: number): Promise<Operazione> {
   const sql = getSql();
   const righe = (await sql`select * from operazioni where id = ${id} and stato = 'aperta'`) as RigaGrezza[];
