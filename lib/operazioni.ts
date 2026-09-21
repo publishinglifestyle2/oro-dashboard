@@ -1,6 +1,8 @@
 // tracciamento manuale: tu clicchi "sono entrato" (con il prezzo vero a cui sei entrato,
-// non necessariamente quello suggerito) e poi "chiudi" quando esci. Il resto (R, usd) si calcola
-// da solo, con la stessa formula usata ovunque nel sistema (oro.py / bot/monitor.py).
+// non necessariamente quello suggerito) e poi "chiudi" quando esci, anche tu con il prezzo vero
+// a cui sei uscito. Stop/target restano modificabili mentre la posizione è aperta (es. sposti lo
+// stop a break-even), ma il calcolo di R/usd alla chiusura usa sempre il rischio ORIGINALE con
+// cui la size è stata dimensionata — stessa formula testata di oro.py / bot/monitor.py.
 import { getSql } from "./db";
 
 export const SPREAD_STIMATO = 0.35;
@@ -14,6 +16,7 @@ export interface Operazione {
   t2: number;
   lotti: number;
   rischioUsd: number;
+  rischioOriginale: number;
   motivo: string;
   apertaIl: string;
   stato: "aperta" | "chiusa";
@@ -39,6 +42,7 @@ function riga(r: RigaGrezza): Operazione {
     t2: Number(r.t2),
     lotti: Number(r.lotti),
     rischioUsd: Number(r.rischio_usd),
+    rischioOriginale: Number(r.rischio_originale ?? Math.abs(Number(r.entrata) - Number(r.stop))),
     motivo: (r.motivo as string) ?? "",
     apertaIl: r.aperta_il instanceof Date ? r.aperta_il.toISOString() : r.aperta_il,
     stato: r.stato as "aperta" | "chiusa",
@@ -76,20 +80,38 @@ export async function apriOperazione(dati: {
   const giaAperta = await operazioneAperta();
   if (giaAperta) throw new Error("c'è già una posizione aperta: chiudila prima di aprirne un'altra");
   const sql = getSql();
+  const rischioOriginale = Math.abs(dati.entrata - dati.stop);
   const righe = (
     dati.apertaIl
       ? await sql`
-          insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, motivo, aperta_il)
-          values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${dati.motivo}, ${dati.apertaIl})
+          insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, rischio_originale, motivo, aperta_il)
+          values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${rischioOriginale}, ${dati.motivo}, ${dati.apertaIl})
           returning *
         `
       : await sql`
-          insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, motivo)
-          values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${dati.motivo})
+          insert into operazioni (lato, entrata, stop, t1, t2, lotti, rischio_usd, rischio_originale, motivo)
+          values (${dati.lato}, ${dati.entrata}, ${dati.stop}, ${dati.t1}, ${dati.t2}, ${dati.lotti}, ${dati.rischioUsd}, ${rischioOriginale}, ${dati.motivo})
           returning *
         `
   ) as RigaGrezza[];
   return riga(righe[0]);
+}
+
+/** cambia stop/target di una posizione già aperta (es. stop a break-even dopo il target 1).
+ * il rischio_originale con cui è stata dimensionata la size NON viene mai toccato qui: R/usd
+ * alla chiusura restano corretti anche se lo stop visualizzato è cambiato. */
+export async function modificaOperazione(id: number, dati: { stop?: number; t1?: number; t2?: number }): Promise<Operazione> {
+  const sql = getSql();
+  const righe = (await sql`select * from operazioni where id = ${id} and stato = 'aperta'`) as RigaGrezza[];
+  if (!righe.length) throw new Error("operazione non trovata o già chiusa");
+  const attuale = riga(righe[0]);
+  const stop = dati.stop ?? attuale.stop;
+  const t1 = dati.t1 ?? attuale.t1;
+  const t2 = dati.t2 ?? attuale.t2;
+  const aggiornate = (await sql`
+    update operazioni set stop = ${stop}, t1 = ${t1}, t2 = ${t2} where id = ${id} returning *
+  `) as RigaGrezza[];
+  return riga(aggiornate[0]);
 }
 
 export async function chiudiOperazione(id: number, esito: string, uscita: number): Promise<Operazione> {
@@ -98,8 +120,9 @@ export async function chiudiOperazione(id: number, esito: string, uscita: number
   if (!righe.length) throw new Error("operazione non trovata o già chiusa");
   const op = riga(righe[0]);
   const segno = op.lato === "BUY" ? 1 : -1;
-  const rischio = Math.abs(op.entrata - op.stop);
-  const r = rischio ? (segno * (uscita - op.entrata) - SPREAD_STIMATO) / rischio : 0;
+  // stessa formula di oro.py/bot/monitor.py: rischio_originale, MAI lo stop attuale (che puoi
+  // aver spostato con "modifica") — altrimenti spostare lo stop a break-even falserebbe R.
+  const r = op.rischioOriginale ? (segno * (uscita - op.entrata) - SPREAD_STIMATO) / op.rischioOriginale : 0;
   const usd = r * op.rischioUsd;
   const aggiornate = (await sql`
     update operazioni

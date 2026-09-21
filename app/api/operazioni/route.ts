@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { assicuraSchemaOperazioni } from "@/lib/db";
-import { apriOperazione, chiudiOperazione, operazioneAperta, storicoOperazioni } from "@/lib/operazioni";
+import { apriOperazione, chiudiOperazione, modificaOperazione, operazioneAperta, storicoOperazioni } from "@/lib/operazioni";
 import { calcolaSize } from "@/lib/motore";
 
 export const dynamic = "force-dynamic";
@@ -65,7 +65,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, operazione: op });
     }
 
-    return NextResponse.json({ ok: false, errore: "azione sconosciuta (usa 'apri' o 'chiudi')" }, { status: 400 });
+    if (body.azione === "modifica") {
+      const { id, stop, t1, t2 } = body;
+      if (typeof id !== "number") {
+        return NextResponse.json({ ok: false, errore: "id mancante" }, { status: 400 });
+      }
+      for (const v of [stop, t1, t2]) {
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) {
+          return NextResponse.json({ ok: false, errore: "valore non valido" }, { status: 400 });
+        }
+      }
+      const op = await modificaOperazione(id, { stop, t1, t2 });
+      return NextResponse.json({ ok: true, operazione: op });
+    }
+
+    return NextResponse.json({ ok: false, errore: "azione sconosciuta (usa 'apri', 'chiudi' o 'modifica')" }, { status: 400 });
   } catch (e) {
     return NextResponse.json({ ok: false, errore: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }

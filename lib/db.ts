@@ -67,6 +67,11 @@ export async function assicuraSchemaOperazioni() {
       chiusa_il timestamptz
     )
   `;
+  // fissato all'apertura, mai toccato da "modifica": stop/t1/t2 restano modificabili liberamente
+  // (es. sposti lo stop a break-even) senza che questo alteri il calcolo di R alla chiusura, che
+  // deve restare "quante volte il rischio con cui hai dimensionato la size", non uno nuovo.
+  await sql`alter table operazioni add column if not exists rischio_originale double precision`;
+  await sql`update operazioni set rischio_originale = abs(entrata - stop) where rischio_originale is null`;
 }
 
 export async function assicuraSchemaPush() {

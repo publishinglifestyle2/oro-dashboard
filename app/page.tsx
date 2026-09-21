@@ -78,6 +78,7 @@ interface Operazione {
   t2: number;
   lotti: number;
   rischioUsd: number;
+  rischioOriginale: number;
   motivo: string;
   apertaIl: string;
   stato: "aperta" | "chiusa";
@@ -283,6 +284,28 @@ export default function Dashboard() {
     [caricaOperazioni]
   );
 
+  const modifica = useCallback(
+    async (id: number, stop: number, t1: number, t2: number) => {
+      setAzioneInCorso(true);
+      setErroreAzione(null);
+      try {
+        const res = await fetch("/api/operazioni", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ azione: "modifica", id, stop, t1, t2 }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.errore || "errore nella modifica");
+        await caricaOperazioni();
+      } catch (e) {
+        setErroreAzione(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAzioneInCorso(false);
+      }
+    },
+    [caricaOperazioni]
+  );
+
   const posizioneAperta = operazioni?.aperta ?? null;
 
   return (
@@ -373,7 +396,13 @@ export default function Dashboard() {
 
             <div className="space-y-5 mt-5 lg:mt-0">
               {posizioneAperta ? (
-                <PosizioneApertaCard op={posizioneAperta} prezzoAttuale={dati.quadro.prezzo} onChiudi={chiudi} bloccato={azioneInCorso} />
+                <PosizioneApertaCard
+                  op={posizioneAperta}
+                  prezzoAttuale={dati.quadro.prezzo}
+                  onChiudi={chiudi}
+                  onModifica={modifica}
+                  bloccato={azioneInCorso}
+                />
               ) : (
                 <SegnaleCard
                   segnale={dati.segnale}
@@ -872,17 +901,20 @@ function PosizioneApertaCard({
   op,
   prezzoAttuale,
   onChiudi,
+  onModifica,
   bloccato,
 }: {
   op: Operazione;
   prezzoAttuale: number;
   onChiudi: (id: number, esito: string, uscita: number) => Promise<void>;
+  onModifica: (id: number, stop: number, t1: number, t2: number) => Promise<void>;
   bloccato: boolean;
 }) {
   const buy = op.lato === "BUY";
   const segno = buy ? 1 : -1;
-  const rischio = Math.abs(op.entrata - op.stop);
-  const rLive = rischio ? (segno * (prezzoAttuale - op.entrata) - SPREAD_STIMATO) / rischio : 0;
+  // stesso rischio_originale usato alla chiusura: se hai spostato lo stop, il "quanto sto
+  // facendo" resta coerente con quello che vedrai quando chiudi davvero.
+  const rLive = op.rischioOriginale ? (segno * (prezzoAttuale - op.entrata) - SPREAD_STIMATO) / op.rischioOriginale : 0;
   const usdLive = rLive * op.rischioUsd;
 
   const toccatoStop = buy ? prezzoAttuale <= op.stop : prezzoAttuale >= op.stop;
@@ -895,12 +927,27 @@ function PosizioneApertaCard({
   else if (raggiuntoT1) suggerimento = { testo: `🎯 hai raggiunto il target 1 (${it(op.t1, 2)}) — chiudi metà e porta lo stop a break-even (${it(op.entrata, 2)})`, tono: "verde" };
   else suggerimento = { testo: `in corso: ${rLive >= 0 ? "+" : ""}${rLive.toFixed(2)}R (~${usdLive >= 0 ? "+" : ""}${it(usdLive, 2)} usd non realizzati)`, tono: "neutro" };
 
-  const bottoni: { etichetta: string; esito: string; uscita: number }[] = [
-    { etichetta: `🎯 T1 (${it(op.t1, 2)})`, esito: "target 1", uscita: op.t1 },
-    { etichetta: `🎯 T2 (${it(op.t2, 2)})`, esito: "target 2", uscita: op.t2 },
-    { etichetta: `🛑 stop (${it(op.stop, 2)})`, esito: "stop", uscita: op.stop },
-    { etichetta: `✋ a mercato (${it(prezzoAttuale, 2)})`, esito: "manuale", uscita: prezzoAttuale },
-  ];
+  // il campo prezzo di uscita resta sempre editabile: i pulsanti sotto lo riempiono solo come
+  // comodità (T1/T2/stop/prezzo attuale), non chiudono da soli — decidi tu il prezzo vero.
+  const [prezzoUscita, setPrezzoUscita] = useState(prezzoAttuale.toFixed(2));
+  const [esitoUscita, setEsitoUscita] = useState("manuale");
+  const [mostraModifica, setMostraModifica] = useState(false);
+  const [stopMod, setStopMod] = useState(op.stop.toFixed(2));
+  const [t1Mod, setT1Mod] = useState(op.t1.toFixed(2));
+  const [t2Mod, setT2Mod] = useState(op.t2.toFixed(2));
+
+  const preset = (etichetta: string, esito: string, valore: number) => (
+    <button
+      key={esito}
+      onClick={() => {
+        setPrezzoUscita(valore.toFixed(2));
+        setEsitoUscita(esito);
+      }}
+      className="rounded-md border border-neutral-700 py-2 text-neutral-200 hover:bg-neutral-800"
+    >
+      {etichetta}
+    </button>
+  );
 
   return (
     <section className={`rounded-xl p-4 border ${buy ? "border-emerald-700 bg-emerald-950/30" : "border-red-700 bg-red-950/30"}`}>
@@ -930,17 +977,106 @@ function PosizioneApertaCard({
         {suggerimento.testo}
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        {bottoni.map((b) => (
-          <button
-            key={b.esito}
-            disabled={bloccato}
-            onClick={() => onChiudi(op.id, b.esito, b.uscita)}
-            className="rounded-md border border-neutral-700 py-2 text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
-          >
-            {b.etichetta}
-          </button>
-        ))}
+      {!mostraModifica ? (
+        <button
+          onClick={() => {
+            setStopMod(op.stop.toFixed(2));
+            setT1Mod(op.t1.toFixed(2));
+            setT2Mod(op.t2.toFixed(2));
+            setMostraModifica(true);
+          }}
+          className="mt-3 text-xs text-neutral-400 underline hover:text-amber-400"
+        >
+          ✏️ modifica stop / target (es. sposta lo stop a break-even)
+        </button>
+      ) : (
+        <div className="mt-3 rounded-lg bg-black/30 p-3 space-y-2">
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <label className="space-y-1">
+              <span className="text-neutral-400">stop</span>
+              <input
+                type="number"
+                step="0.01"
+                value={stopMod}
+                onChange={(e) => setStopMod(e.target.value)}
+                className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-neutral-400">target 1</span>
+              <input
+                type="number"
+                step="0.01"
+                value={t1Mod}
+                onChange={(e) => setT1Mod(e.target.value)}
+                className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-neutral-400">target 2</span>
+              <input
+                type="number"
+                step="0.01"
+                value={t2Mod}
+                onChange={(e) => setT2Mod(e.target.value)}
+                className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button
+              disabled={bloccato}
+              onClick={async () => {
+                const s = parseFloat(stopMod), tt1 = parseFloat(t1Mod), tt2 = parseFloat(t2Mod);
+                if (![s, tt1, tt2].every(Number.isFinite)) return;
+                await onModifica(op.id, s, tt1, tt2);
+                setMostraModifica(false);
+              }}
+              className="flex-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm py-1.5"
+            >
+              salva modifiche
+            </button>
+            <button onClick={() => setMostraModifica(false)} className="rounded-md border border-neutral-700 px-3 text-sm text-neutral-400 hover:bg-neutral-800">
+              annulla
+            </button>
+          </div>
+          <p className="text-xs text-neutral-500">
+            il rischio con cui è dimensionata la size resta quello originale: spostare lo stop non altera il calcolo di R/usd alla chiusura.
+          </p>
+        </div>
+      )}
+
+      <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+        {preset("T1", "target 1", op.t1)}
+        {preset("T2", "target 2", op.t2)}
+        {preset("stop", "stop", op.stop)}
+        {preset("attuale", "manuale", prezzoAttuale)}
+      </div>
+      <div className="mt-2 flex gap-2">
+        <label className="flex-1 flex items-center gap-2 rounded-md bg-neutral-800 border border-neutral-700 px-2">
+          <span className="text-xs text-neutral-400 whitespace-nowrap">uscita a</span>
+          <input
+            type="number"
+            step="0.01"
+            value={prezzoUscita}
+            onChange={(e) => {
+              setPrezzoUscita(e.target.value);
+              setEsitoUscita("manuale");
+            }}
+            className="w-full bg-transparent py-1.5 text-sm tabular-nums outline-none"
+          />
+        </label>
+        <button
+          disabled={bloccato}
+          onClick={() => {
+            const uscita = parseFloat(prezzoUscita);
+            if (!Number.isFinite(uscita)) return;
+            onChiudi(op.id, esitoUscita, uscita);
+          }}
+          className={`rounded-md px-4 text-sm font-medium text-white disabled:opacity-50 ${buy ? "bg-red-700 hover:bg-red-600" : "bg-emerald-700 hover:bg-emerald-600"}`}
+        >
+          chiudi
+        </button>
       </div>
       <p className="mt-2 text-xs text-neutral-500">aperta il {new Date(op.apertaIl).toLocaleString("it-IT")}</p>
     </section>
