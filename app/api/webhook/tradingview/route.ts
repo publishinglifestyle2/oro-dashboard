@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { assicuraSchemaCandele5m, assicuraSchemaPush, getSql } from "@/lib/db";
+import { assicuraSchema, assicuraSchemaAggregati, assicuraSchemaPush, getSql } from "@/lib/db";
 import { fetchDbTutto } from "@/lib/tvdb";
 import { costruisciQuadro, costruisciScenari, valutaTrigger, rr, RR_MINIMO_T2 } from "@/lib/motore";
 import { inviaSeNuovo } from "@/lib/push";
@@ -12,7 +12,8 @@ let schemaPronto = false;
 let schemaPushPronto = false;
 
 /** dopo ogni candela ricontrolla il segnale, e se è un nuovo BUY/SELL manda la notifica push.
- * ogni candela ricevuta è già una chiusura di 5 minuti (il Pine Script gira su grafico 5m). */
+ * il motore decide comunque solo su chiusure 5m (ricampionate dalla fonte 1m, vedi lib/tvdb.ts):
+ * arrivare ogni minuto invece che ogni 5 non cambia le decisioni, solo quanto in fretta le vede. */
 async function controllaEAvvisa() {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return; // push non configurata: salta senza errori
 
@@ -34,7 +35,10 @@ async function controllaEAvvisa() {
     await assicuraSchemaPush();
     schemaPushPronto = true;
   }
-  const chiave = `${segnale.lato}-${s.entrata}-${quadro.t}`;
+  // arrotondato a 4$ e SENZA l'orario candela: così un segnale che resta valido per più candele
+  // di fila (es. "slancio" durante un movimento sostenuto) non manda una notifica ogni 5 minuti,
+  // ma solo quando cambia lato/setup o il prezzo si è mosso abbastanza da essere un aggiornamento vero.
+  const chiave = `${segnale.lato}-${s.nome}-${Math.round(s.entrata / 4) * 4}`;
   const icona = segnale.lato === "BUY" ? "🟢" : "🔴";
   await inviaSeNuovo(
     chiave,
@@ -43,7 +47,38 @@ async function controllaEAvvisa() {
   );
 }
 
-// TradingView chiama questo indirizzo a ogni chiusura di candela 5 minuti (vedi il Pine Script).
+/** ricalcola una candela aggregata (15m o 1h) dai minuti grezzi già salvati in quella finestra e
+ * la scrive con un upsert — vedi la nota sopra sul perché rileggere (poche righe, indicizzate)
+ * invece di sommare in incrementale. sql.query() serve solo perché il nome tabella non si può
+ * parametrizzare in un tagged template: i due valori possibili sono letterali qui sotto, mai
+ * input esterno. */
+async function aggiornaAggregato(
+  sql: ReturnType<typeof getSql>,
+  tabella: "candele_15m_agg" | "candele_1h_agg",
+  inizio: number,
+  fine: number
+) {
+  const righe = (await sql.query(
+    `select open, high, low, close, volume from candele_1m where t >= $1 and t < $2 order by t asc`,
+    [inizio, fine]
+  )) as { open: number; high: number; low: number; close: number; volume: number }[];
+  if (!righe.length) return;
+  const open = righe[0].open;
+  const close = righe[righe.length - 1].close;
+  const high = Math.max(...righe.map((r) => r.high));
+  const low = Math.min(...righe.map((r) => r.low));
+  const volume = righe.reduce((s, r) => s + r.volume, 0);
+  await sql.query(
+    `insert into ${tabella} (t, open, high, low, close, volume)
+     values ($1, $2, $3, $4, $5, $6)
+     on conflict (t) do update set
+       open = excluded.open, high = excluded.high, low = excluded.low,
+       close = excluded.close, volume = excluded.volume`,
+    [inizio, open, high, low, close, volume]
+  );
+}
+
+// TradingView chiama questo indirizzo a ogni chiusura di candela 1 minuto (luca-oro-feed-1m.pine).
 // La chiave nell'url protegge l'endpoint: senza TV_WEBHOOK_SECRET configurata, rifiuta tutto.
 export async function POST(req: NextRequest) {
   const chiave = req.nextUrl.searchParams.get("key");
@@ -68,17 +103,29 @@ export async function POST(req: NextRequest) {
 
   try {
     if (!schemaPronto) {
-      await assicuraSchemaCandele5m();
+      await assicuraSchema();
+      await assicuraSchemaAggregati();
       schemaPronto = true;
     }
     const sql = getSql();
+    const tn = t as number;
     await sql`
-      insert into candele_5m (t, open, high, low, close, volume)
-      values (${t as number}, ${open as number}, ${high as number}, ${low as number}, ${close as number}, ${volume})
+      insert into candele_1m (t, open, high, low, close, volume)
+      values (${tn}, ${open as number}, ${high as number}, ${low as number}, ${close as number}, ${volume})
       on conflict (t) do update set
         open = excluded.open, high = excluded.high, low = excluded.low,
         close = excluded.close, volume = excluded.volume
     `;
+    // ricalcola le due candele aggregate (15m/1h) del minuto appena arrivato RILEGGENDO solo i
+    // minuti di quel bucket (al massimo 15 o 60 righe, mai lo storico) invece di sommare in
+    // incrementale: così un webhook rimandato due volte per lo stesso minuto (retry di rete) non
+    // duplica il volume nell'aggregato — resta sempre coerente col dato grezzo, che è la verità.
+    const bucket15 = Math.floor(tn / 900_000) * 900_000;
+    const bucket1h = Math.floor(tn / 3_600_000) * 3_600_000;
+    await Promise.all([
+      aggiornaAggregato(sql, "candele_15m_agg", bucket15, bucket15 + 900_000),
+      aggiornaAggregato(sql, "candele_1h_agg", bucket1h, bucket1h + 3_600_000),
+    ]);
   } catch (e) {
     const messaggio = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, errore: `database: ${messaggio}` }, { status: 500 });

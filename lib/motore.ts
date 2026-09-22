@@ -22,8 +22,10 @@ export const ORA_FINE = 18;
 export const BUF_K = 0.6; // stop = livello ± BUF_K × atr 15m (minimo 3 dollari)
 export const RR_MINIMO_T2 = 1.5;
 /** setup che il motore può segnalare: nel backtest le rotture perdevano, quindi la dashboard
- * (come il bot locale) parte con solo i rimbalzi sui livelli nella direzione del trend. */
-export const SETUP_ATTIVI = new Set(["rimbalzo"]);
+ * (come il bot locale) parte con solo i rimbalzi sui livelli nella direzione del trend, più
+ * "slancio" (vedi sotto) aggiunto per seguire le entrate discrezionali del 21/09 — NON ancora
+ * backtestato, solo verificato a mano sui 4 trade di quel giorno: da validare in demo. */
+export const SETUP_ATTIVI = new Set(["rimbalzo", "slancio"]);
 
 export interface Quadro {
   t: number; // istante dell'ultima candela 5m, epoch ms
@@ -187,6 +189,13 @@ export function rr(s: Scenario, target: number): number {
   return r ? Math.abs(target - s.entrata) / r : 0;
 }
 
+/** target 2 = il prossimo livello strutturale (r2/r3/s2/s3), ma solo se non è troppo lontano:
+ * quando il livello forte successivo è distante (perché quello nel mezzo è troppo debole per
+ * essere considerato, vedi scegli() sopra), il target diventava spesso irraggiungibile — sui
+ * dati storici il t2 strutturale veniva toccato prima dello stop solo nel 20% dei casi, contro
+ * il 31% mettendo questo tetto a 2.5× il rischio (stesso multiplo già usato per "slancio"). */
+const CAP_T2_RISCHIO = 2.5;
+
 export function costruisciScenari(q: Quadro): [Scenario, Scenario, Scenario, Scenario] {
   const buf = Math.max(BUF_K * q.atr15, 3.0);
   return [
@@ -196,7 +205,7 @@ export function costruisciScenari(q: Quadro): [Scenario, Scenario, Scenario, Sce
       entrata: q.s1,
       stop: q.s1 - buf,
       t1: q.r1,
-      t2: q.r2,
+      t2: Math.min(q.r2, q.s1 + buf * CAP_T2_RISCHIO),
       condizione: `il prezzo difende ${tondo(q.s1)} con un rimbalzo deciso`,
     },
     {
@@ -205,7 +214,7 @@ export function costruisciScenari(q: Quadro): [Scenario, Scenario, Scenario, Sce
       entrata: q.r1,
       stop: q.r1 - buf,
       t1: q.r2,
-      t2: q.r3,
+      t2: Math.min(q.r3, q.r1 + buf * CAP_T2_RISCHIO),
       condizione: `il prezzo rompe ${tondo(q.r1)} al rialzo con forza e lo riconquista`,
     },
     {
@@ -214,7 +223,7 @@ export function costruisciScenari(q: Quadro): [Scenario, Scenario, Scenario, Sce
       entrata: q.s1,
       stop: q.s1 + buf,
       t1: q.s2,
-      t2: q.s3,
+      t2: Math.max(q.s3, q.s1 - buf * CAP_T2_RISCHIO),
       condizione: `il prezzo perde ${tondo(q.s1)} e ci rientra sotto con decisione`,
     },
     {
@@ -223,7 +232,7 @@ export function costruisciScenari(q: Quadro): [Scenario, Scenario, Scenario, Sce
       entrata: q.r1,
       stop: q.r1 + buf,
       t1: q.s1,
-      t2: q.s2,
+      t2: Math.max(q.s2, q.r1 - buf * CAP_T2_RISCHIO),
       condizione: `il prezzo viene respinto da ${tondo(q.r1)} con decisione`,
     },
   ];
@@ -233,6 +242,42 @@ export interface Segnale {
   lato: "BUY" | "SELL" | "ATTENDI";
   scenario?: Scenario;
   motivo: string;
+}
+
+interface Slancio {
+  lato: "BUY" | "SELL";
+  spinta: number;
+  alto: number;
+  basso: number;
+}
+
+/** legge solo le ultime candele 5m concluse (niente livelli, niente trend orario): un movimento
+ * netto e deciso, con poco va-e-vieni, indipendentemente da dove sta il prezzo rispetto a
+ * vwap/s1/r1 o da cosa dice il trend a 1h. Il "rimbalzo" aspetta che il prezzo tocchi un bordo;
+ * questo cattura chi compra/vende forza già in corsa (o una rottura di struttura a breve termine
+ * anche contro il trend orario) — il tipo di entrata del 21/09. Soglie tarate empiricamente:
+ * K=6 candele, spinta netta >= 3× l'atr di una singola candela 5m ed "efficienza" (netto diviso
+ * il percorso reale, wick esclusi) >= 0.65 — sotto queste soglie scattava anche sul rumore
+ * normale (>1000 volte in 18 giorni contro le ~230 attuali, vedi test manuale). */
+function rilevaSlancio(concluse: Candela[], atr5: number): Slancio | null {
+  const K = 6;
+  const SOGLIA_ATR = 3.0;
+  const SOGLIA_EFFICIENZA = 0.65;
+  if (concluse.length < K) return null;
+  const fin = concluse.slice(-K);
+  const netto = fin[fin.length - 1].close - fin[0].open;
+  if (Math.abs(netto) < SOGLIA_ATR * atr5) return null;
+  let precedente = fin[0].open;
+  let percorso = 0;
+  for (const c of fin) {
+    percorso += Math.abs(c.close - precedente);
+    precedente = c.close;
+  }
+  const efficienza = percorso > 0 ? Math.abs(netto) / percorso : 0;
+  if (efficienza < SOGLIA_EFFICIENZA) return null;
+  const alto = Math.max(...fin.map((c) => c.high));
+  const basso = Math.min(...fin.map((c) => c.low));
+  return { lato: netto > 0 ? "BUY" : "SELL", spinta: netto, alto, basso };
 }
 
 /** valuta solo le ultime due candele 5m CONCLUSE, esattamente come il bot locale.
@@ -311,6 +356,49 @@ export function valutaTrigger(
       const s: Scenario = { ...srimb, entrata: ultima.close };
       if (rr(s, s.t1) >= 1.0)
         return { lato: "SELL", scenario: s, motivo: `rifiuto di ${tondo(q.r1)} con candela 5m di scarico, 1h ribassista` };
+    }
+  }
+
+  if (SETUP_ATTIVI.has("slancio")) {
+    const s = rilevaSlancio(concluse, q.atr5);
+    if (s) {
+      const bufS = Math.max(BUF_K * q.atr15, 3.0);
+      const entrata = ultima.close;
+      if (s.lato === "BUY") {
+        const stop = s.basso - bufS;
+        const rischio = entrata - stop;
+        if (rischio > 0) {
+          const sc2: Scenario = {
+            nome: "long slancio",
+            lato: "BUY",
+            entrata,
+            stop,
+            t1: entrata + rischio * 1.5,
+            t2: entrata + rischio * 2.5,
+            condizione: `spinta rialzista netta sulle ultime ${6} candele 5m (+${tondo(s.spinta)}$), niente pausa`,
+          };
+          if (rr(sc2, sc2.t2) >= RR_MINIMO_T2) {
+            return { lato: "BUY", scenario: sc2, motivo: `slancio rialzista in corso: prezzo ${tondo(entrata)} spinge da ${tondo(s.basso)}, stop sotto il minimo recente` };
+          }
+        }
+      } else {
+        const stop = s.alto + bufS;
+        const rischio = stop - entrata;
+        if (rischio > 0) {
+          const sc2: Scenario = {
+            nome: "short slancio",
+            lato: "SELL",
+            entrata,
+            stop,
+            t1: entrata - rischio * 1.5,
+            t2: entrata - rischio * 2.5,
+            condizione: `spinta ribassista netta sulle ultime ${6} candele 5m (${tondo(s.spinta)}$), niente pausa`,
+          };
+          if (rr(sc2, sc2.t2) >= RR_MINIMO_T2) {
+            return { lato: "SELL", scenario: sc2, motivo: `slancio ribassista in corso: prezzo ${tondo(entrata)} scarica da ${tondo(s.alto)}, stop sopra il massimo recente` };
+          }
+        }
+      }
     }
   }
 

@@ -432,6 +432,7 @@ export default function Dashboard() {
                 candele={dati.candeleGrafico}
                 minutiCandela={dati.minutiCandela}
                 q={dati.quadro}
+                scenari={dati.scenari}
                 segnale={dati.segnale}
                 posizioneAperta={posizioneAperta}
               />
@@ -519,12 +520,14 @@ function GraficoCard({
   candele,
   minutiCandela,
   q,
+  scenari,
   segnale,
   posizioneAperta,
 }: {
   candele: { time: number; open: number; high: number; low: number; close: number }[];
   minutiCandela: number;
   q: Quadro;
+  scenari: [Scenario, Scenario, Scenario, Scenario];
   segnale: Segnale;
   posizioneAperta: Operazione | null;
 }) {
@@ -611,11 +614,14 @@ function GraficoCard({
     };
 
     // i livelli vicini sono i trigger veri (rimbalzo sul supporto = entra buy, rifiuto sulla
-    // resistenza = entra sell — vedi "come mi muovo io"); quelli chiave restano target di riferimento.
+    // resistenza = entra sell — vedi "come mi muovo io"); il "target" è il t2 con tetto delle
+    // stesse scenari (2.5× il rischio), NON il livello strutturale grezzo: quello a volte è così
+    // lontano da non essere mai raggiunto (vedi nota su CAP_T2_RISCHIO in lib/motore.ts).
+    const [rimbGrafico, , , srimbGrafico] = scenari;
     linea(q.r1, "#f87171", "🔴 entra SELL");
-    linea(q.r2, "#f87171", "target");
+    linea(srimbGrafico.t2, "#f87171", "target");
     linea(q.s1, "#34d399", "🟢 entra BUY");
-    linea(q.s2, "#34d399", "target");
+    linea(rimbGrafico.t2, "#34d399", "target");
 
     if (posizioneAperta) {
       linea(posizioneAperta.entrata, "#f5c518", "entrata");
@@ -630,7 +636,7 @@ function GraficoCard({
       linea(s.t2, "#22c55e", "t2", true);
     }
     ricalcolaEtichette();
-  }, [q, segnale, posizioneAperta, ricalcolaEtichette]);
+  }, [q, scenari, segnale, posizioneAperta, ricalcolaEtichette]);
 
   return (
     <section className="rounded-xl bg-neutral-900 p-4">

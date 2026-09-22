@@ -12,6 +12,11 @@ export function getSql() {
   return _sql;
 }
 
+/** candele grezze a 1 minuto ricevute dal webhook TradingView (luca-oro-feed-1m.pine) — la
+ * fonte "viva". Per tenere sotto controllo il trasferimento dati di Neon (la stessa quota
+ * esaurita in ~3 giorni quando giravamo a 1 minuto la prima volta) qui teniamo SOLO una finestra
+ * recente: il contesto lungo (10 giorni per i pivot 1h, 3 giorni per i pivot 15m) vive nelle
+ * tabelle aggregate sotto, aggiornate un pezzo alla volta — mai riletto da capo. */
 export async function assicuraSchema() {
   const sql = getSql();
   await sql`
@@ -27,9 +32,35 @@ export async function assicuraSchema() {
   `;
 }
 
-/** candele a 5 minuti dal webhook TradingView (versione "gratuita": una candela ogni 5 minuti
- * invece che ogni minuto, così il database si riaddormenta tra una chiamata e l'altra invece di
- * restare sveglio 24/7 — è quello che consumava la quota gratuita di Neon in ~2 giorni). */
+/** candele 15 minuti e 1 ora, aggregate in incrementale (un upsert per candela 1m ricevuta, mai
+ * ricostruite rileggendo lo storico grezzo): è quello che tiene economico l'accesso ai 10 giorni
+ * di storico che servono ai livelli, anche restando a 1 minuto sulla fonte viva. */
+export async function assicuraSchemaAggregati() {
+  const sql = getSql();
+  await sql`
+    create table if not exists candele_15m_agg (
+      t bigint primary key,
+      open double precision not null,
+      high double precision not null,
+      low double precision not null,
+      close double precision not null,
+      volume double precision not null default 0
+    )
+  `;
+  await sql`
+    create table if not exists candele_1h_agg (
+      t bigint primary key,
+      open double precision not null,
+      high double precision not null,
+      low double precision not null,
+      close double precision not null,
+      volume double precision not null default 0
+    )
+  `;
+}
+
+/** @deprecated tabella della vecchia fase "5 minuti" (2026-09 → 22): non più scritta, lasciata
+ * per lo storico già raccolto. Le funzioni sopra la sostituiscono. */
 export async function assicuraSchemaCandele5m() {
   const sql = getSql();
   await sql`

@@ -22,11 +22,10 @@ export async function GET() {
     let h1, m15, m5, m1, fonte: string, affidabile: boolean, minutiCandela: number;
     const daTradingView = await fetchDbTutto().catch(() => null);
     if (daTradingView) {
-      ({ h1, m15, m5 } = daTradingView);
-      m1 = undefined; // il webhook manda candele 5m dirette, non più il minuto grezzo
-      fonte = "TradingView Premium (webhook in tempo reale)";
+      ({ h1, m15, m5, m1 } = daTradingView);
+      fonte = "TradingView Premium (webhook in tempo reale, 1 minuto)";
       affidabile = true;
-      minutiCandela = 5;
+      minutiCandela = 1;
     } else if (token) {
       ({ h1, m15, m5, m1 } = await fetchOandaTutto(token, env));
       fonte = `OANDA (${env === "practice" ? "conto practice" : "conto live"})`;

@@ -1,40 +1,22 @@
 import { Candela, ricampiona } from "./candele";
 import { getSql } from "./db";
 
-// il motore usa pivot su 10 giorni (1h) e 3 giorni (15m) — vedi lib/motore.ts. 12 giorni dà un
-// margine piccolo senza scaricare storia che nessuno guarda: prima erano 30, che con la dashboard
-// che interroga /api/signal ogni 60 secondi ha consumato in 3 giorni tutto il trasferimento dati
-// mensile gratuito di Neon (5,54 GB) — non erano le ore di calcolo, era proprio il volume di dati
-// riletto a ogni giro.
-const GIORNI_STORICO = 12;
-const CANDELE_AL_GIORNO = 288; // 24h * 60min / 5min
-const RIGHE_MAX = GIORNI_STORICO * CANDELE_AL_GIORNO;
+// la fonte viva (candele_1m) tiene solo una finestra recente: il resto del contesto (10 giorni
+// per i pivot 1h, 3 giorni per i pivot 15m — vedi lib/motore.ts) vive nelle tabelle aggregate,
+// aggiornate un pezzo alla volta dal webhook (vedi app/api/webhook/tradingview/route.ts). Così
+// ogni lettura resta piccola anche restando a 1 minuto sulla fonte viva: è quello che ha esaurito
+// la quota di trasferimento di Neon la prima volta (rileggevamo tutto lo storico ad ogni giro).
+const ORE_GREZZE = 8; // finestra 1m: basta e avanza per il quadro 5m e il dettaglio del grafico
+const GIORNI_15M = 4; // margine sopra i 3 giorni che servono ai pivot 15m
+const GIORNI_1H = 12; // margine sopra i 10 giorni che servono ai pivot 1h
 
-// piccola cache in memoria: la dashboard chiede questi dati ogni 60 secondi (o più spesso se hai
-// più schede aperte), ma una candela nuova arriva solo ogni 5 minuti — non serve rileggere tutto
-// dal database a ogni singola richiesta. Su Vercel (Fluid Compute) l'istanza spesso resta viva tra
-// una richiesta e l'altra, quindi questa cache taglia per davvero il trasferimento dati reale.
-const CACHE_MS = 45_000;
-let cache: { scadenza: number; dati: { h1: Candela[]; m15: Candela[]; m5: Candela[] } } | null = null;
+const CACHE_MS = 75_000; // più lunga dell'intervallo fra due candele 1m (60s): la cache regge davvero
+let cache: { scadenza: number; dati: { h1: Candela[]; m15: Candela[]; m5: Candela[]; m1: Candela[] } } | null = null;
 
-/** legge le candele 5m ricevute via webhook da TradingView (candele_5m) e ricampiona 15m/1h da
- * quelle — il 5m stesso arriva già pronto, non serve costruirlo dal minuto. Una candela ogni 5
- * minuti invece che ogni minuto tiene il database Neon libero di riaddormentarsi tra una chiamata
- * e l'altra (con una candela al minuto restava sempre sveglio, consumando ore di calcolo). Il
- * motore comunque decide solo su chiusure 5m: nessuna differenza nelle decisioni, solo nel
- * dettaglio del grafico (5m invece di 1m).
- * restituisce null se il database non è ancora configurato o non ha abbastanza storico
- * (in quel caso l'API ricade su OANDA/Yahoo). */
-export async function fetchDbTutto(): Promise<{ h1: Candela[]; m15: Candela[]; m5: Candela[] } | null> {
-  if (!process.env.DATABASE_URL) return null;
-  if (cache && cache.scadenza > Date.now()) return cache.dati;
+type RigaCandela = { t: string | number; open: number; high: number; low: number; close: number; volume: number };
 
-  const sql = getSql();
-  const righe = (await sql`
-    select t, open, high, low, close, volume from candele_5m order by t desc limit ${RIGHE_MAX}
-  `) as { t: string | number; open: number; high: number; low: number; close: number; volume: number }[];
-  if (righe.length < 12) return null; // meno di un'ora di storico: non abbastanza per il quadro
-  const m5: Candela[] = righe
+function aCandele(righe: RigaCandela[]): Candela[] {
+  return righe
     .reverse()
     .map((r) => ({
       time: Number(r.t),
@@ -45,11 +27,43 @@ export async function fetchDbTutto(): Promise<{ h1: Candela[]; m15: Candela[]; m
       volume: Number(r.volume),
       completa: true,
     }));
-  const dati = {
-    h1: ricampiona(m5, 3_600_000, 300_000),
-    m15: ricampiona(m5, 900_000, 300_000),
-    m5,
-  };
+}
+
+/** legge la fonte viva (candele_1m, finestra corta) più le due tabelle aggregate (15m/1h, storico
+ * lungo ma leggero) e ricostruisce il quadro multi-timeframe. Il 5m per il motore/grafico si
+ * ricampiona dalla finestra corta di 1m: è sempre "vero" 5 minuti concluso, indipendentemente da
+ * quanto spesso arrivano le candele grezze.
+ * restituisce null se il database non è ancora configurato o non ha abbastanza storico
+ * (in quel caso l'API ricade su OANDA/Yahoo). */
+export async function fetchDbTutto(): Promise<{ h1: Candela[]; m15: Candela[]; m5: Candela[]; m1: Candela[] } | null> {
+  if (!process.env.DATABASE_URL) return null;
+  if (cache && cache.scadenza > Date.now()) return cache.dati;
+
+  const sql = getSql();
+  const ora = Date.now();
+  const [righeM1, righe15, righe1h] = (await Promise.all([
+    sql`select t, open, high, low, close, volume from candele_1m where t >= ${ora - ORE_GREZZE * 3_600_000} order by t desc`,
+    sql`select t, open, high, low, close, volume from candele_15m_agg where t >= ${ora - GIORNI_15M * 86_400_000} order by t desc`,
+    sql`select t, open, high, low, close, volume from candele_1h_agg where t >= ${ora - GIORNI_1H * 86_400_000} order by t desc`,
+  ])) as unknown as [RigaCandela[], RigaCandela[], RigaCandela[]];
+  if (righeM1.length < 12) return null; // meno di un'ora di storico grezzo: non abbastanza per il quadro
+
+  const m1 = aCandele(righeM1);
+  const m15Agg = aCandele(righe15);
+  const h1Agg = aCandele(righe1h);
+  const m5 = ricampiona(m1, 300_000, 60_000);
+
+  // le aggregate coprono lo storico lungo ma si fermano all'ultimo giro completato: l'ultimo
+  // pezzo (i minuti di questo 15m/1h ancora in corso) arriva ricampionando la finestra corta di
+  // 1m, così il quadro vede sempre il presente anche appena dopo un riavvio del webhook.
+  const sogliaM15 = m15Agg.length ? m15Agg[m15Agg.length - 1].time + 900_000 : 0;
+  const sogliaH1 = h1Agg.length ? h1Agg[h1Agg.length - 1].time + 3_600_000 : 0;
+  const m15 = [...m15Agg, ...ricampiona(m1, 900_000, 60_000).filter((c) => c.time >= sogliaM15)];
+  const h1 = [...h1Agg, ...ricampiona(m1, 3_600_000, 60_000).filter((c) => c.time >= sogliaH1)];
+
+  if (m15.length < 40 || h1.length < 40) return null; // storico aggregato non ancora popolato a sufficienza
+
+  const dati = { h1, m15, m5, m1 };
   cache = { scadenza: Date.now() + CACHE_MS, dati };
   return dati;
 }
