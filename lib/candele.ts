@@ -147,3 +147,12 @@ export function chiaveGiornoRoma(ms: number): string {
   const p = partiRoma(ms);
   return `${p.anno}-${String(p.mese).padStart(2, "0")}-${String(p.giorno).padStart(2, "0")}`;
 }
+
+/** epoch (in secondi) da passare al grafico (lightweight-charts) perché l'asse mostri l'ora
+ * italiana: la libreria non supporta un fuso arbitrario, tratta sempre il timestamp come UTC —
+ * qui si "spacciano" per UTC le stesse cifre dell'orologio di Roma (funziona anche a cavallo
+ * del cambio ora legale/solare, perché parte da partiRoma() invece di un offset fisso). */
+export function epochGraficoRoma(ms: number): number {
+  const p = partiRoma(ms);
+  return Math.floor(Date.UTC(p.anno, p.mese - 1, p.giorno, p.ora, p.minuto) / 1000);
+}

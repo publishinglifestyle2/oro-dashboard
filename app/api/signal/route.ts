@@ -3,6 +3,7 @@ import { fetchOandaTutto } from "@/lib/oanda";
 import { fetchYahooTutto } from "@/lib/yahoo";
 import { fetchDbTutto } from "@/lib/tvdb";
 import { calcolaSize, costruisciQuadro, costruisciScenari, rischioScenario, rr, valutaTrigger, RR_MINIMO_T2, LOT_STEP } from "@/lib/motore";
+import { epochGraficoRoma } from "@/lib/candele";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -63,11 +64,13 @@ export async function GET() {
 
     const ritardoMin = (Date.now() - quadro.t) / 60000;
 
-    // per il grafico: candele più fini disponibili (1m su oanda/yahoo, 5m su tradingview —
-    // vedi lib/tvdb.ts sul perché), tempo in secondi come vuole lightweight-charts.
+    // per il grafico: candele più fini disponibili (1m su oanda/yahoo/tradingview, 5m di
+    // ripiego). il tempo va convertito con epochGraficoRoma, non un banale /1000: lightweight-
+    // charts mostra sempre i timestamp come se fossero UTC, quindi senza questo l'asse appariva
+    // 2 ore indietro rispetto all'ora italiana (differenza ora legale a settembre).
     const fonteGrafico = m1 && m1.length > 0 ? m1 : m5;
     const candeleGrafico = fonteGrafico.slice(-300).map((c) => ({
-      time: Math.floor(c.time / 1000),
+      time: epochGraficoRoma(c.time),
       open: c.open,
       high: c.high,
       low: c.low,
