@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assicuraSchema, assicuraSchemaAggregati, assicuraSchemaPush, getSql } from "@/lib/db";
 import { fetchDbTutto } from "@/lib/tvdb";
-import { costruisciQuadro, costruisciScenari, valutaTrigger, rr, RR_MINIMO_T2 } from "@/lib/motore";
-import { inviaSeNuovo } from "@/lib/push";
+import { costruisciQuadro, costruisciScenari, valutaTrigger, rr, RR_MINIMO_T2, rilevaSlancio } from "@/lib/motore";
+import { inviaSeNuovo, inviaSeNuovoSuCanale } from "@/lib/push";
 import { formattaUsd } from "@/lib/candele";
 
 export const dynamic = "force-dynamic";
@@ -27,24 +27,43 @@ async function controllaEAvvisa() {
   const quadro = costruisciQuadro(h1, m15, m5);
   const scenari = costruisciScenari(quadro);
   const segnale = valutaTrigger(m5, quadro, scenari, oraInizio, oraFine);
-  if (segnale.lato === "ATTENDI" || !segnale.scenario) return;
-  const s = segnale.scenario;
-  if (rr(s, s.t2) < RR_MINIMO_T2) return;
 
   if (!schemaPushPronto) {
     await assicuraSchemaPush();
     schemaPushPronto = true;
   }
-  // arrotondato a 4$ e SENZA l'orario candela: così un segnale che resta valido per più candele
-  // di fila (es. "slancio" durante un movimento sostenuto) non manda una notifica ogni 5 minuti,
-  // ma solo quando cambia lato/setup o il prezzo si è mosso abbastanza da essere un aggiornamento vero.
-  const chiave = `${segnale.lato}-${s.nome}-${Math.round(s.entrata / 4) * 4}`;
-  const icona = segnale.lato === "BUY" ? "🟢" : "🔴";
-  await inviaSeNuovo(
-    chiave,
-    `${icona} XAUUSD ${segnale.lato}`,
-    `entrata ${formattaUsd(s.entrata, 2)} · stop ${formattaUsd(s.stop, 2)} · target ${formattaUsd(s.t1, 2)} / ${formattaUsd(s.t2, 2)}`
-  );
+
+  // segnale vero (solo "rimbalzo", vedi SETUP_ATTIVI in motore.ts): entrata/stop/target precisi,
+  // pensati per essere seguiti così come sono.
+  if (segnale.lato !== "ATTENDI" && segnale.scenario && rr(segnale.scenario, segnale.scenario.t2) >= RR_MINIMO_T2) {
+    const s = segnale.scenario;
+    // arrotondato a 4$ e SENZA l'orario candela: così un segnale che resta valido per più candele
+    // di fila non manda una notifica ogni 5 minuti, ma solo quando cambia lato/setup o il prezzo
+    // si è mosso abbastanza da essere un aggiornamento vero.
+    const chiave = `${segnale.lato}-${s.nome}-${Math.round(s.entrata / 4) * 4}`;
+    const icona = segnale.lato === "BUY" ? "🟢" : "🔴";
+    await inviaSeNuovo(
+      chiave,
+      `${icona} XAUUSD ${segnale.lato}`,
+      `entrata ${formattaUsd(s.entrata, 2)} · stop ${formattaUsd(s.stop, 2)} · target ${formattaUsd(s.t1, 2)} / ${formattaUsd(s.t2, 2)}`
+    );
+  }
+
+  // promemoria "guarda il grafico": setup "slancio", tolto da SETUP_ATTIVI perché sui dati non
+  // è un trade da seguire alla lettera (vedi motore.ts), ma resta un indicatore utile di "sta
+  // succedendo qualcosa" — canale indipendente, niente entrata/stop/target promessi come precisi.
+  const concluse = m5.filter((c) => c.completa);
+  const spinta = rilevaSlancio(concluse, quadro.atr5);
+  if (spinta) {
+    const icona = spinta.lato === "BUY" ? "👀🟢" : "👀🔴";
+    const chiaveWatch = `${spinta.lato}-${Math.round(quadro.prezzo / 4) * 4}`;
+    await inviaSeNuovoSuCanale(
+      "watch",
+      chiaveWatch,
+      `${icona} XAUUSD in movimento`,
+      `spinta ${spinta.lato} in corso, prezzo ~${formattaUsd(quadro.prezzo, 2)} — dai un'occhiata al grafico, valuta tu (non è un'entrata precisa)`
+    );
+  }
 }
 
 /** ricalcola una candela aggregata (15m o 1h) dai minuti grezzi già salvati in quella finestra e

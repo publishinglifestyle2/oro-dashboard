@@ -69,3 +69,24 @@ export async function inviaSeNuovo(chiave: string, titolo: string, corpo: string
   await inviaATutti(titolo, corpo, dati);
   return true;
 }
+
+/** come inviaSeNuovo, ma su un canale indipendente (vedi push_canali in lib/db.ts): usata per il
+ * promemoria "guarda il grafico" (setup "slancio", vedi motore.ts), che deve deduplicare per
+ * conto suo senza interferire con la deduplica del vero segnale di trade. */
+export async function inviaSeNuovoSuCanale(
+  canale: string,
+  chiave: string,
+  titolo: string,
+  corpo: string,
+  dati?: Record<string, unknown>
+): Promise<boolean> {
+  const sql = getSql();
+  const righe = (await sql`select ultima_chiave from push_canali where canale = ${canale}`) as { ultima_chiave: string | null }[];
+  if (righe[0]?.ultima_chiave === chiave) return false;
+  await sql`
+    insert into push_canali (canale, ultima_chiave) values (${canale}, ${chiave})
+    on conflict (canale) do update set ultima_chiave = excluded.ultima_chiave
+  `;
+  await inviaATutti(titolo, corpo, dati);
+  return true;
+}

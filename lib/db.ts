@@ -124,4 +124,14 @@ export async function assicuraSchemaPush() {
     )
   `;
   await sql`insert into push_stato (id, ultima_chiave) values (1, null) on conflict (id) do nothing`;
+
+  // come push_stato, ma un canale per riga: serve per avere più tipi di notifica indipendenti
+  // (es. "trade" = il vero segnale di rimbalzo, "watch" = il promemoria "guarda il grafico")
+  // senza che l'uno faccia sparire la deduplica dell'altro.
+  await sql`
+    create table if not exists push_canali (
+      canale text primary key,
+      ultima_chiave text
+    )
+  `;
 }

@@ -249,7 +249,7 @@ export interface Segnale {
   motivo: string;
 }
 
-interface Slancio {
+export interface Slancio {
   lato: "BUY" | "SELL";
   spinta: number;
   alto: number;
@@ -263,8 +263,11 @@ interface Slancio {
  * anche contro il trend orario) — il tipo di entrata del 21/09. Soglie tarate empiricamente:
  * K=6 candele, spinta netta >= 3× l'atr di una singola candela 5m ed "efficienza" (netto diviso
  * il percorso reale, wick esclusi) >= 0.65 — sotto queste soglie scattava anche sul rumore
- * normale (>1000 volte in 18 giorni contro le ~230 attuali, vedi test manuale). */
-function rilevaSlancio(concluse: Candela[], atr5: number): Slancio | null {
+ * normale (>1000 volte in 18 giorni contro le ~230 attuali, vedi test manuale).
+ * ESPORTATA e usata SOLO per il promemoria push "guarda il grafico" (vedi webhook/tradingview):
+ * su 103 episodi storici solo il 14% raggiungeva un target 2R prima dello stop, quindi non è più
+ * usata come setup che consiglia entrata/stop/target precisi (tolta da SETUP_ATTIVI). */
+export function rilevaSlancio(concluse: Candela[], atr5: number): Slancio | null {
   const K = 6;
   const SOGLIA_ATR = 3.0;
   const SOGLIA_EFFICIENZA = 0.65;
