@@ -22,10 +22,15 @@ export const ORA_FINE = 18;
 export const BUF_K = 0.6; // stop = livello ± BUF_K × atr 15m (minimo 3 dollari)
 export const RR_MINIMO_T2 = 1.5;
 /** setup che il motore può segnalare: nel backtest le rotture perdevano, quindi la dashboard
- * (come il bot locale) parte con solo i rimbalzi sui livelli nella direzione del trend, più
- * "slancio" (vedi sotto) aggiunto per seguire le entrate discrezionali del 21/09 — NON ancora
- * backtestato, solo verificato a mano sui 4 trade di quel giorno: da validare in demo. */
-export const SETUP_ATTIVI = new Set(["rimbalzo", "slancio"]);
+ * (come il bot locale) parte con solo i rimbalzi sui livelli nella direzione del trend.
+ * "slancio" (vedi sotto, funzione rilevaSlancio) resta nel codice ma è spento: aggiunto il 21/09
+ * per seguire entrate discrezionali di quel giorno, poi verificato su 103 episodi storici e sui
+ * 26 trade reali del 22-24/09 — solo il 14% degli episodi risolti raggiungeva il target 2 prima
+ * dello stop, e i trade reali concordi con "slancio" hanno perso in totale (-735,83 $, 2 BUY su 2
+ * perdenti). Riattivabile aggiungendolo di nuovo qui, se in futuro si trova un filtro che funziona
+ * davvero (un tentativo — rapporto spinta/atr5 ed efficienza del movimento — non ha retto alla
+ * prova sui 103 episodi: nessuna fascia prevedeva l'esito in modo pulito). */
+export const SETUP_ATTIVI = new Set(["rimbalzo"]);
 
 export interface Quadro {
   t: number; // istante dell'ultima candela 5m, epoch ms
