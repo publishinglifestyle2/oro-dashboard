@@ -5,6 +5,7 @@ import { createChart, CandlestickSeries, ColorType, IChartApi, ISeriesApi, IPric
 
 const INTERVALLO_MS = 60_000;
 const SPREAD_STIMATO = 0.35; // stessa costante usata server-side: qui serve solo per l'anteprima live
+const OZ_PER_LOTTO = 100; // idem: oncie per lotto standard oro, per il calcolatore
 
 interface Livello {
   prezzo: number;
@@ -437,6 +438,7 @@ export default function Dashboard() {
                 posizioneAperta={posizioneAperta}
               />
               <LivelliCard q={dati.quadro} />
+              <CalcolatoreCard q={dati.quadro} />
             </div>
 
             <div className="space-y-5 mt-5 lg:mt-0">
@@ -677,6 +679,117 @@ function LivelliCard({ q }: { q: Quadro }) {
       <Riga colore="red" etichetta="resistenza vicina" valore={q.r1} />
       <Riga colore="emerald" etichetta="supporto vicino" valore={q.s1} />
       <Riga colore="emerald" etichetta="supporto chiave" valore={q.s2} />
+    </section>
+  );
+}
+
+function CalcolatoreCard({ q }: { q: Quadro }) {
+  const [lato, setLato] = useState<"BUY" | "SELL">("BUY");
+  const [entrata, setEntrata] = useState("");
+  const [lotti, setLotti] = useState("0.30");
+  const [sl, setSl] = useState("");
+  const [tp, setTp] = useState("");
+
+  // p&l stimato: stessa formula usata per chiudere le operazioni (prezzo - spread stimato),
+  // qui moltiplicata per il lotto inserito invece che per il rischio_usd di una size calcolata —
+  // è una stima (spread reale del broker può differire), non un valore garantito.
+  const calcola = (uscita: number): number | null => {
+    const e = parseFloat(entrata), l = parseFloat(lotti);
+    if (![e, l, uscita].every(Number.isFinite) || l <= 0) return null;
+    const segno = lato === "BUY" ? 1 : -1;
+    return (segno * (uscita - e) - SPREAD_STIMATO) * l * OZ_PER_LOTTO;
+  };
+
+  const slNum = parseFloat(sl);
+  const tpNum = parseFloat(tp);
+  const risultatoSl = Number.isFinite(slNum) ? calcola(slNum) : null;
+  const risultatoTp = Number.isFinite(tpNum) ? calcola(tpNum) : null;
+
+  return (
+    <section className="rounded-xl bg-neutral-900 p-4 space-y-3">
+      <h2 className="text-sm font-medium text-neutral-400">calcolatore rapido</h2>
+
+      <div className="flex gap-2">
+        {(["BUY", "SELL"] as const).map((l) => (
+          <button
+            key={l}
+            onClick={() => setLato(l)}
+            className={`flex-1 rounded-md py-1.5 text-sm font-medium transition ${
+              lato === l ? (l === "BUY" ? "bg-emerald-700 text-white" : "bg-red-700 text-white") : "bg-neutral-800 text-neutral-400"
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <label className="space-y-1">
+          <span className="text-neutral-400">prezzo di entrata</span>
+          <input
+            type="number"
+            step="0.01"
+            placeholder={q.prezzo.toFixed(2)}
+            value={entrata}
+            onChange={(e) => setEntrata(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-neutral-400">lotti</span>
+          <input
+            type="number"
+            step="0.01"
+            value={lotti}
+            onChange={(e) => setLotti(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-amber-500"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-neutral-400">stop loss (facoltativo)</span>
+          <input
+            type="number"
+            step="0.01"
+            value={sl}
+            onChange={(e) => setSl(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-red-500"
+          />
+        </label>
+        <label className="space-y-1">
+          <span className="text-neutral-400">target (facoltativo)</span>
+          <input
+            type="number"
+            step="0.01"
+            value={tp}
+            onChange={(e) => setTp(e.target.value)}
+            className="w-full rounded-md bg-neutral-800 border border-neutral-700 px-2 py-1.5 tabular-nums outline-none focus:border-emerald-500"
+          />
+        </label>
+      </div>
+
+      {(risultatoSl !== null || risultatoTp !== null) && (
+        <div className="space-y-1 text-sm pt-1">
+          {risultatoSl !== null && (
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">se tocca lo stop</span>
+              <span className={`font-medium tabular-nums ${risultatoSl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {risultatoSl >= 0 ? "+" : ""}
+                {it(risultatoSl, 2)} usd
+              </span>
+            </div>
+          )}
+          {risultatoTp !== null && (
+            <div className="flex items-center justify-between">
+              <span className="text-neutral-400">se tocca il target</span>
+              <span className={`font-medium tabular-nums ${risultatoTp >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                {risultatoTp >= 0 ? "+" : ""}
+                {it(risultatoTp, 2)} usd
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[11px] text-neutral-500">stima con spread {it(SPREAD_STIMATO, 2)}$: il broker reale può differire leggermente.</p>
     </section>
   );
 }
